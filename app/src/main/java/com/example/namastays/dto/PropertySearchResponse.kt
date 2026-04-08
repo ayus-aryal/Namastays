@@ -9,5 +9,7 @@ data class PropertySearchResponse(
     val state: String,
     val country: String,
     val thumbnailUrl: String?,
-    val startingPrice: Int?
+    val startingPrice: String,
+    val amenities: List<String>,
+    val imageUrls: List<String>
 )
