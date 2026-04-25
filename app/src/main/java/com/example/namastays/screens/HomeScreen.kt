@@ -151,7 +151,20 @@ fun HomeScreen(navController: NavController) {
             TravelerBottomNavBar(
                 items       = bottomNavItems,
                 selectedIdx = selectedTab,
-                onItemClick = { selectedTab = it }
+                onItemClick = { index ->
+                    selectedTab = index
+
+                    when(index){
+                        0 -> navController.navigate("home"){
+                            popUpTo("home")
+                            launchSingleTop = true
+                        }
+                        1 -> navController.navigate("explore"){
+                            popUpTo("home")
+                            launchSingleTop = true
+                        }
+                    }
+                }
             )
         }
     ) { innerPadding ->

@@ -1,15 +1,19 @@
 package com.example.namastays.navigation
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.namastays.screens.ExploreScreen
 import com.example.namastays.screens.HomeScreen
 import com.example.namastays.screens.SearchResultsScreen
 import com.example.namastays.screens.PropertyDetailsScreen
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @Composable
 fun AppNavGraph() {
     val navController = rememberNavController()
@@ -56,6 +60,10 @@ fun AppNavGraph() {
                 propertyId = propertyId,
                 navController = navController
             )
+        }
+
+        composable("explore"){
+            ExploreScreen(navController)
         }
     }
 }
