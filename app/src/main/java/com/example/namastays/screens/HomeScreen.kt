@@ -142,86 +142,58 @@ val bottomNavItems = listOf(
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 @Composable
 fun HomeScreen(navController: NavController) {
-    var selectedTab       by remember { mutableStateOf(0) }
-    var selectedDotIndex  by remember { mutableStateOf(0) }
+    var selectedDotIndex by remember { mutableStateOf(0) }
 
-    Scaffold(
-        containerColor = BackgroundColor,
-        bottomBar = {
-            TravelerBottomNavBar(
-                items       = bottomNavItems,
-                selectedIdx = selectedTab,
-                onItemClick = { index ->
-                    selectedTab = index
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .background(BackgroundColor)
+    ) {
 
-                    when(index){
-                        0 -> navController.navigate("home"){
-                            popUpTo("home")
-                            launchSingleTop = true
-                        }
-                        1 -> navController.navigate("explore"){
-                            popUpTo("home")
-                            launchSingleTop = true
-                        }
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        Column(
+        TopBar()
+
+        Spacer(Modifier.height(16.dp))
+
+        SearchBar(
+            navController = navController,
             modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-        ) {
-            // ── Top Bar ──────────────────────────────────────────────────────
-            TopBar()
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+        )
 
-            Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(24.dp))
 
-            // ── Search Bar ───────────────────────────────────────────────────
-            SearchBar(
-                navController = navController,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-            )
+        SectionHeader(
+            title = "Featured Destinations",
+            actionText = "See All",
+            modifier = Modifier.padding(horizontal = 20.dp)
+        )
 
-            Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(12.dp))
 
-            // ── Featured Destinations ────────────────────────────────────────
-            SectionHeader(
-                title      = "Featured Destinations",
-                actionText = "See All",
-                modifier   = Modifier.padding(horizontal = 20.dp)
-            )
+        FeaturedDestinationsRow(
+            destinations = sampleDestinations,
+            selectedDot = selectedDotIndex,
+            onDotSelected = { selectedDotIndex = it },
+            navController = navController
+        )
 
-            Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(24.dp))
 
-            FeaturedDestinationsRow(
-                destinations   = sampleDestinations,
-                selectedDot    = selectedDotIndex,
-                onDotSelected  = { selectedDotIndex = it },
-                navController = navController
-            )
+        SectionHeader(
+            title = "Categories",
+            modifier = Modifier.padding(horizontal = 20.dp)
+        )
 
-            Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(12.dp))
 
-            // ── Categories ───────────────────────────────────────────────────
-            SectionHeader(
-                title    = "Categories",
-                modifier = Modifier.padding(horizontal = 20.dp)
-            )
+        CategoriesGrid(
+            categories = sampleCategories,
+            modifier = Modifier.padding(horizontal = 20.dp)
+        )
 
-            Spacer(Modifier.height(12.dp))
-
-            CategoriesGrid(
-                categories = sampleCategories,
-                modifier   = Modifier.padding(horizontal = 20.dp)
-            )
-
-            Spacer(Modifier.height(16.dp))
-        }
+        Spacer(Modifier.height(16.dp))
     }
 }
 
