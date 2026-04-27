@@ -101,6 +101,43 @@ fun MainScreen() {
                 val propertyId = backStackEntry.arguments?.getString("propertyId") ?: ""
                 PropertyDetailsScreen(propertyId, navController)
             }
+
+            composable("cities"){
+                CityListScreen(navController)
+            }
+
+            composable(
+                route = "places/{citySlug}",
+                arguments = listOf(navArgument("citySlug") {
+                    type = NavType.StringType
+                })
+            ) { backStackEntry ->
+
+                val citySlug = backStackEntry.arguments?.getString("citySlug") ?: ""
+
+                PlaceListScreen(
+                    navController = navController,
+                    citySlug = citySlug
+                )
+            }
+
+            composable(
+                route = "place_detail/{citySlug}/{placeSlug}",
+                arguments = listOf(
+                    navArgument("citySlug") { type = NavType.StringType },
+                    navArgument("placeSlug") { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+
+                val citySlug = backStackEntry.arguments?.getString("citySlug") ?: ""
+                val placeSlug = backStackEntry.arguments?.getString("placeSlug") ?: ""
+
+                PlaceDetailScreen(
+                    citySlug = citySlug,
+                    placeSlug = placeSlug,
+                    navController = navController
+                )
+            }
         }
     }
 }

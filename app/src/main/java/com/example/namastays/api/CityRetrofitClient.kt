@@ -3,15 +3,15 @@ package com.example.namastays.api
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
-object PropertyRetrofitClient {
-
+object CityRetrofitClient {
     private const val BASE_URL = "https://fe20-113-199-251-195.ngrok-free.app/"
 
-    val api: PropertyApiService by lazy {
+    val api: CitiesApiService by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
-            .create(PropertyApiService::class.java)
+            .create(CitiesApiService::class.java)
     }
 }
+

@@ -84,7 +84,7 @@ fun ExploreScreen(navController: NavController) {
 
         // Select a City Button
         Button(
-            onClick = { /* navigate or show city picker */ },
+            onClick = { navController.navigate("cities") },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
