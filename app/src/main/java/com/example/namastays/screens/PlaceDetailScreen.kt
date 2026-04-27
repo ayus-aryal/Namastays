@@ -2,6 +2,7 @@ package com.example.namastays.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.example.namastays.viewmodel.PlaceDetailViewModel
+import androidx.core.net.toUri
 
 @Composable
 fun PlaceDetailScreen(
@@ -234,8 +236,16 @@ fun PlaceDetailScreen(
                 Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                     Button(
                         onClick = {
-                            val uri = Uri.parse("geo:${place.lat},${place.lng}?q=${place.lat},${place.lng}")
-                            val intent = Intent(Intent.ACTION_VIEW, uri)
+                            Log.d("MAP_DEBUG", "lat=${place.lat}, lng=${place.lng}")
+                            //val uri = "google.navigation:q=${place.lat},${place.lng}".toUri()
+                            val uri =
+                                "geo:${place.lat},${place.lng}?q=${place.lat},${place.lng}".toUri()
+
+
+                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                setPackage("com.google.android.apps.maps")
+                            }
+
                             context.startActivity(intent)
                         },
                         modifier = Modifier
