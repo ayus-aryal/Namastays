@@ -69,6 +69,14 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import android.net.Uri
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Hiking
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Terrain
+import androidx.compose.material.icons.outlined.Hiking
+import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Terrain
 
 // ─── Color Palette ───────────────────────────────────────────────────────────
 val BackgroundColor   = Color(0xFFF2F2F7)
@@ -134,9 +142,9 @@ val sampleCategories = listOf(
 val bottomNavItems = listOf(
     BottomNavItem("Home",     Icons.Filled.Home,           Icons.Outlined.Home),
     BottomNavItem("Explore",  Icons.Filled.Search,         Icons.Outlined.Search),
-    BottomNavItem("Bookings", Icons.Filled.CalendarMonth,  Icons.Outlined.CalendarMonth),
-    BottomNavItem("Wishlist", Icons.Filled.Favorite,       Icons.Outlined.FavoriteBorder),
-    BottomNavItem("Profile",  Icons.Filled.Person,         Icons.Outlined.Person)
+    BottomNavItem("Maps", Icons.Filled.Map,  Icons.Outlined.Map),
+    BottomNavItem("Trek Mode", Icons.Filled.Hiking,       Icons.Outlined.Hiking),
+    BottomNavItem("Safety",  Icons.Filled.Shield,         Icons.Outlined.Shield)
 )
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
