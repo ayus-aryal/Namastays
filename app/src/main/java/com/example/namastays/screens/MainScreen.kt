@@ -26,7 +26,7 @@ fun MainScreen() {
         "home" -> 0
         "explore" -> 1
         "bookings" -> 2
-        "wishlist" -> 3
+        "trek_mode" -> 3
         "profile" -> 4
         else -> 0
     }
@@ -42,7 +42,7 @@ fun MainScreen() {
                         0 -> "home"
                         1 -> "explore"
                         2 -> "bookings"
-                        3 -> "wishlist"
+                        3 -> "trek_mode"
                         4 -> "profile"
                         else -> "home"
                     }
@@ -74,8 +74,8 @@ fun MainScreen() {
                 Text("Bookings Screen")
             }
 
-            composable("wishlist") {
-                Text("Wishlist Screen")
+            composable("trek_mode") {
+                TrekModeScreen()
             }
 
             composable("profile") {
