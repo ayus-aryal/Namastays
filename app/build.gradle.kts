@@ -1,15 +1,13 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.example.namastays"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 36
+
 
     defaultConfig {
         applicationId = "com.example.namastays"
@@ -77,4 +75,11 @@ dependencies {
 
 
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+
+    implementation("com.google.android.gms:play-services-location:21.2.0")
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 }
