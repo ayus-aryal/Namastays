@@ -27,7 +27,7 @@ fun MainScreen() {
         "explore" -> 1
         "bookings" -> 2
         "trek_mode" -> 3
-        "profile" -> 4
+        "safety" -> 4
         else -> 0
     }
 
@@ -43,7 +43,7 @@ fun MainScreen() {
                         1 -> "explore"
                         2 -> "bookings"
                         3 -> "trek_mode"
-                        4 -> "profile"
+                        4 -> "safety"
                         else -> "home"
                     }
 
@@ -78,8 +78,8 @@ fun MainScreen() {
                 TrekModeScreen()
             }
 
-            composable("profile") {
-                Text("Profile Screen")
+            composable("safety") {
+                SafetyHomeScreen(navController)
             }
 
             composable(
@@ -138,6 +138,14 @@ fun MainScreen() {
                     navController = navController
                 )
             }
+
+            composable(SafetyRoutes.SOS)          { SOSScreen(navController) }
+            composable(SafetyRoutes.AMS)          { AMSCheckerScreen(navController) }
+            composable(SafetyRoutes.LAKE_LOUISE)  { LakeLouiseScreen(navController) }
+            composable(SafetyRoutes.CONTACTS)     { EmergencyContactsScreen(navController) }
+            composable(SafetyRoutes.ADD_CONTACT)  { AddContactScreen(navController) }
+            composable(SafetyRoutes.COMPASS)      { CompassScreen(navController) }
+            composable(SafetyRoutes.TORCH)        { TorchScreen(navController) }
         }
     }
 }
