@@ -10,6 +10,9 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import com.example.namastays.trek.presentataion.map.TrekMapScreen
+import com.example.namastays.trek.presentation.list.TrekListScreen
+import com.example.namastays.trek.presentation.detail.TrekDetailScreen
 
 @RequiresApi(Build.VERSION_CODES.Q)
 @Composable
@@ -25,7 +28,7 @@ fun MainScreen() {
     val selectedIndex = when (currentRoute) {
         "home" -> 0
         "explore" -> 1
-        "bookings" -> 2
+        "maps" -> 2
         "trek_mode" -> 3
         "safety" -> 4
         else -> 0
@@ -41,7 +44,7 @@ fun MainScreen() {
                     val route = when (index) {
                         0 -> "home"
                         1 -> "explore"
-                        2 -> "bookings"
+                        2 -> "maps"
                         3 -> "trek_mode"
                         4 -> "safety"
                         else -> "home"
@@ -70,8 +73,28 @@ fun MainScreen() {
                 ExploreScreen(navController)
             }
 
-            composable("bookings") {
-                Text("Bookings Screen")
+            composable("maps") {
+                TrekListScreen(navController)
+            }
+
+            composable(
+                route = "trek_detail/{trekId}",
+                arguments = listOf(navArgument("trekId") {
+                    type = NavType.StringType
+                })
+            ) { backStackEntry ->
+                val trekId = backStackEntry.arguments?.getString("trekId") ?: ""
+                TrekDetailScreen(trekId = trekId, navController = navController)
+            }
+
+            composable(
+                route = "trek_map/{trekId}",
+                arguments = listOf(navArgument("trekId") {
+                    type = NavType.StringType
+                })
+            ) { backStackEntry ->
+                val trekId = backStackEntry.arguments?.getString("trekId") ?: ""
+                TrekMapScreen(trekId = trekId, navController = navController)
             }
 
             composable("trek_mode") {

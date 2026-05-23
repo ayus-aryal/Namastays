@@ -134,4 +134,8 @@ dependencies {
     ksp(
         "androidx.room:room-compiler:2.7.1"
     )
+
+    // MapLibre
+    implementation("org.maplibre.gl:android-sdk:11.8.8")
+    implementation("org.maplibre.gl:android-plugin-annotation-v9:3.0.0")
 }
