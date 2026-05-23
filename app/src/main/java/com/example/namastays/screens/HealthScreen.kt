@@ -1,360 +1,502 @@
 package com.example.namastays.screens
 
-import androidx.compose.ui.draw.clip
-
-
-import androidx.compose.foundation.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.*
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.text.font.*
-import androidx.compose.ui.text.style.*
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.namastays.R
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  AMS CHECKER — Yes/No symptom questionnaire
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+//  Palette
+// ─────────────────────────────────────────────────────────────────────────────
 
-data class AMSQuestion(val text: String, val serious: Boolean = false)
+private val PageBg      = Color(0xFFF7F8FA)
+private val CardBg      = Color(0xFFFFFFFF)
+private val CardBorder  = Color(0xFFE5E7EB)
+private val TextPrimary = Color(0xFF111827)
+private val TextMuted   = Color(0xFF6B7280)
+private val TextHint    = Color(0xFF9CA3AF)
+private val SelectedBg  = Color(0xFF111827)
 
-val amsQuestions = listOf(
-    AMSQuestion("Do you have a headache?"),
-    AMSQuestion("Do you feel nauseous or have vomited?"),
-    AMSQuestion("Do you feel unusually fatigued or weak?"),
-    AMSQuestion("Do you have dizziness or light-headedness?"),
-    AMSQuestion("Do you have difficulty sleeping?"),
-    AMSQuestion("Do you have shortness of breath at rest?", serious = true),
-    AMSQuestion("Do you have chest tightness?", serious = true),
-    AMSQuestion("Are you confused or disoriented?", serious = true),
-    AMSQuestion("Do you have difficulty walking straight?", serious = true),
-    AMSQuestion("Do you have facial or hand swelling?", serious = true)
+// ─────────────────────────────────────────────────────────────────────────────
+//  Data
+// ─────────────────────────────────────────────────────────────────────────────
+
+data class LLSQuestion(
+    val label: String,
+    val icon: ImageVector,
+    val options: List<String>,
 )
 
-@Composable
-fun AMSCheckerScreen(navController: NavController) {
-    val answers = remember { mutableStateListOf<Boolean?>(*arrayOfNulls(amsQuestions.size)) }
-    var showResult by remember { mutableStateOf(false) }
-
-    val bgColor = Color(0xFF1A1A2E)
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(bgColor)
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        ScreenHeader("AMS Checker", onBack = { navController.popBackStack() })
-
-        InfoBanner(
-            icon = Icons.Default.Info,
-            text = "Acute Mountain Sickness (AMS) can be life-threatening. Answer honestly.",
-            color = Color(0xFF2196F3)
-        )
-
-        amsQuestions.forEachIndexed { index, question ->
-            AMSQuestionCard(
-                question = question,
-                answer = answers[index],
-                onAnswer = { answers[index] = it }
-            )
-        }
-
-        // ── Check button ─────────────────────────────────────────────────────
-        val allAnswered = answers.none { it == null }
-        Button(
-            onClick = { showResult = true },
-            enabled = allAnswered,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Text("Assess My Risk", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
-
-        // ── Result card ───────────────────────────────────────────────────────
-        if (showResult && allAnswered) {
-            AMSResultCard(answers = answers.filterNotNull())
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-    }
-}
-
-@Composable
-fun AMSQuestionCard(
-    question: AMSQuestion,
-    answer: Boolean?,
-    onAnswer: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF16213E))
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (question.serious) {
-            Icon(
-                Icons.Default.Warning,
-                contentDescription = null,
-                tint = Color(0xFFFF5252),
-                modifier = Modifier.size(16.dp)
-            )
-        }
-        Text(
-            text = question.text,
-            color = Color.White,
-            fontSize = 13.sp,
-            modifier = Modifier.weight(1f),
-            lineHeight = 18.sp
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            AnswerButton(label = "Yes", selected = answer == true, color = Color(0xFFFF5252)) { onAnswer(true) }
-            AnswerButton(label = "No",  selected = answer == false, color = Color(0xFF4CAF50)) { onAnswer(false) }
-        }
-    }
-}
-
-@Composable
-fun AnswerButton(label: String, selected: Boolean, color: Color, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) color else color.copy(alpha = 0.15f))
-            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = if (selected) Color.White else color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun AMSResultCard(answers: List<Boolean>) {
-    val yesCount = answers.count { it }
-    val seriousYes = amsQuestions.filterIndexed { i, q -> q.serious && answers.getOrElse(i) { false } }
-
-    val (severity, color, message) = when {
-        seriousYes.isNotEmpty() -> Triple("SEVERE — Descend Immediately", Color(0xFFD32F2F),
-            "You have serious HACE/HAPE symptoms. Descend at least 300m immediately and seek medical help.")
-        yesCount >= 3           -> Triple("MODERATE AMS", Color(0xFFFF9800),
-            "You show moderate AMS. Rest, hydrate, do not ascend further. Descend if symptoms worsen.")
-        yesCount >= 1           -> Triple("MILD AMS", Color(0xFFFFEB3B),
-            "Mild symptoms detected. Rest at current altitude. Monitor closely and do not ascend.")
-        else                    -> Triple("No AMS Detected", Color(0xFF4CAF50),
-            "No significant AMS symptoms. Stay hydrated and continue to monitor.")
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(color.copy(alpha = 0.1f))
-            .border(2.dp, color, RoundedCornerShape(16.dp))
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text(severity, color = color, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-        Text(message, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, lineHeight = 19.sp)
-        if (seriousYes.isNotEmpty()) {
-            Text(
-                "⚠ Seek medical attention immediately",
-                color = Color(0xFFFF5252),
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp
-            )
-        }
-    }
-}
-
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  LAKE LOUISE SCORE
-// ═════════════════════════════════════════════════════════════════════════════
-
-data class LLQuestion(val symptom: String, val options: List<String>)
-
-val llQuestions = listOf(
-    LLQuestion(
-        "Headache",
-        listOf("None", "Mild", "Moderate", "Severe, incapacitating")
+private val llsQuestions = listOf(
+    LLSQuestion(
+        label = "Headache",
+        icon  = Icons.Outlined.Psychology,
+        options = listOf("None", "Mild", "Moderate", "Severe"),
     ),
-    LLQuestion(
-        "Gastrointestinal symptoms",
-        listOf("None", "Poor appetite or nausea", "Moderate nausea/vomiting", "Severe nausea/vomiting")
+    LLSQuestion(
+        label = "Gastrointestinal",
+        icon  = Icons.Outlined.Restaurant,
+        options = listOf("Appetite OK", "Poor Appetite", "Nausea", "Vomiting"),
     ),
-    LLQuestion(
-        "Fatigue and/or weakness",
-        listOf("None", "Mild fatigue", "Moderate fatigue", "Severe, incapacitating")
+    LLSQuestion(
+        label = "Fatigue & Weakness",
+        icon  = Icons.Outlined.BatteryAlert,
+        options = listOf("Normal", "Mild", "Moderate", "Severe"),
     ),
-    LLQuestion(
-        "Dizziness / light-headedness",
-        listOf("None", "Mild", "Moderate", "Severe, incapacitating")
+    LLSQuestion(
+        label = "Dizziness",
+        icon  = Icons.Outlined.Autorenew,
+        options = listOf("None", "Mild", "Moderate", "Severe"),
+    ),
+    LLSQuestion(
+        label = "Overall AMS",
+        icon  = Icons.Outlined.MonitorHeart,
+        options = listOf("Not ill", "Mildly ill", "Moderately ill", "Very ill"),
+    ),
+)
+
+private const val MAX_SCORE = 15
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Result model
+// ─────────────────────────────────────────────────────────────────────────────
+
+private data class LLSResult(
+    val tag: String,
+    val label: String,
+    val advice: String,
+    val accentColor: Color,
+    val bgColor: Color,
+    val borderColor: Color,
+)
+
+private fun evaluateScore(score: Int): LLSResult = when {
+    score >= 10 -> LLSResult(
+        tag = "Descend Immediately",
+        label = "Severe AMS — Score $score / $MAX_SCORE",
+        advice = "Immediate descent required. Do not continue ascent. Seek emergency medical attention now.",
+        accentColor = Color(0xFFD32F2F),
+        bgColor     = Color(0xFFFFF5F5),
+        borderColor = Color(0xFFFFCDD2),
     )
-)
+    score >= 6 -> LLSResult(
+        tag = "Do Not Ascend",
+        label = "Moderate AMS — Score $score / $MAX_SCORE",
+        advice = "Rest at current altitude. Do not ascend further. Descend if symptoms do not improve within 24 hours.",
+        accentColor = Color(0xFFE65100),
+        bgColor     = Color(0xFFFFF8F0),
+        borderColor = Color(0xFFFFCCBC),
+    )
+    score >= 3 -> LLSResult(
+        tag = "Rest & Monitor",
+        label = "Mild AMS — Score $score / $MAX_SCORE",
+        advice = "Monitor closely. Rest and hydrate at current altitude. Do not ascend until symptoms fully resolve.",
+        accentColor = Color(0xFFF57F17),
+        bgColor     = Color(0xFFFFFDE7),
+        borderColor = Color(0xFFFFF176),
+    )
+    else -> LLSResult(
+        tag = "All Clear",
+        label = "No AMS — Score $score / $MAX_SCORE",
+        advice = "No significant AMS symptoms detected. Stay well hydrated and continue to monitor your condition.",
+        accentColor = Color(0xFF2E7D32),
+        bgColor     = Color(0xFFF1F8E9),
+        borderColor = Color(0xFFC5E1A5),
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Screen
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun LakeLouiseScreen(navController: NavController) {
-    val scores = remember { mutableStateListOf(*IntArray(llQuestions.size) { -1 }.toTypedArray()) }
-    var showResult by remember { mutableStateOf(false) }
-    val totalScore = if (scores.none { it == -1 }) scores.sum() else -1
+    val scores      = remember { mutableStateListOf(*IntArray(llsQuestions.size) { -1 }.toTypedArray()) }
+    var showResult  by remember { mutableStateOf(false) }
 
-    Column(
+    val allAnswered  = scores.none { it == -1 }
+    val currentScore = if (allAnswered) scores.sum() else scores.filter { it >= 0 }.sum()
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF1A1A2E))
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(PageBg)
     ) {
-        ScreenHeader("Lake Louise AMS Score", onBack = { navController.popBackStack() })
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 20.dp, end = 20.dp, top = 28.dp, bottom = 100.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // ── Back + Title ─────────────────────────────────────────────────
+            item {
+                ScreenHeader("AMS Checker", onBack = { navController.popBackStack() })
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Assess your symptoms using the Lake Louise Scoring System. " +
+                            "Select the intensity that best describes your current state.",
+                    fontFamily = PlusJakartaSans,
+                    fontSize   = 13.sp,
+                    color      = TextMuted,
+                    lineHeight = 19.sp,
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
-        InfoBanner(
-            icon = Icons.Default.Assignment,
-            text = "Score each symptom based on the past hour at current altitude.",
-            color = Color(0xFF9C27B0)
-        )
+            // ── Disclaimer ───────────────────────────────────────────────────
+            item { DisclaimerBanner() }
 
-        llQuestions.forEachIndexed { index, question ->
-            LLQuestionCard(
-                question = question,
-                selectedIndex = scores[index],
-                onSelect = { scores[index] = it }
+            // ── Progress ─────────────────────────────────────────────────────
+            item { ProgressCard(score = currentScore) }
+
+            // ── Questions ────────────────────────────────────────────────────
+            itemsIndexed(llsQuestions) { qIdx, question ->
+                QuestionCard(
+                    question      = question,
+                    selectedIndex = scores[qIdx],
+                    onSelect      = { optIdx ->
+                        scores[qIdx] = optIdx
+                        showResult = false
+                    },
+                )
+            }
+
+            // ── Result ───────────────────────────────────────────────────────
+            if (showResult && allAnswered) {
+                item {
+                    val result = evaluateScore(currentScore)
+                    ResultCard(result = result, score = currentScore)
+                }
+            }
+        }
+
+        // ── Floating button ──────────────────────────────────────────────────
+        Button(
+            onClick  = { if (allAnswered) showResult = true },
+            enabled  = allAnswered,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 24.dp, start = 20.dp, end = 20.dp)
+                .fillMaxWidth()
+                .height(54.dp),
+            shape  = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(
+                containerColor         = TextPrimary,
+                disabledContainerColor = Color(0xFFD1D5DB),
+                contentColor           = Color.White,
+                disabledContentColor   = Color(0xFF9CA3AF),
+            ),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Calculate,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text       = "Calculate Score",
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.Bold,
+                fontSize   = 15.sp,
             )
         }
-
-        val allAnswered = scores.none { it == -1 }
-        Button(
-            onClick = { showResult = true },
-            enabled = allAnswered,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Text("Calculate Score", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
-
-        if (showResult && totalScore >= 0) {
-            LakeLouiseResultCard(totalScore)
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Disclaimer banner
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Composable
-fun LLQuestionCard(question: LLQuestion, selectedIndex: Int, onSelect: (Int) -> Unit) {
+private fun DisclaimerBanner() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFEEF2FF))
+            .border(1.dp, Color(0xFFC7D2FE), RoundedCornerShape(10.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment     = Alignment.Top,
+    ) {
+        Icon(
+            imageVector        = Icons.Outlined.Info,
+            contentDescription = null,
+            tint               = Color(0xFF4338CA),
+            modifier           = Modifier.size(16.dp).padding(top = 1.dp),
+        )
+        Text(
+            text       = "The Lake Louise Score is a validated clinical standard for AMS assessment. " +
+                    "It does not replace professional medical evaluation or diagnosis.",
+            fontFamily = PlusJakartaSans,
+            fontSize   = 12.sp,
+            color      = Color(0xFF4338CA),
+            lineHeight = 17.sp,
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Progress card
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ProgressCard(score: Int) {
+    val animatedProgress by animateFloatAsState(
+        targetValue    = score / MAX_SCORE.toFloat(),
+        animationSpec  = tween(durationMillis = 400),
+        label          = "progress",
+    )
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF16213E))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .background(CardBg)
+            .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(question.symptom, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-        question.options.forEachIndexed { idx, label ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (selectedIndex == idx)
-                            Color(0xFF9C27B0).copy(alpha = 0.3f)
-                        else Color.Transparent
-                    )
-                    .clickable { onSelect(idx) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                RadioButton(
-                    selected = selectedIndex == idx,
-                    onClick = { onSelect(idx) },
-                    colors = RadioButtonDefaults.colors(
-                        selectedColor = Color(0xFF9C27B0),
-                        unselectedColor = Color.White.copy(alpha = 0.4f)
-                    )
-                )
-                Text("$idx – $label", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
-            }
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment     = Alignment.CenterVertically,
+        ) {
+            Text(
+                text       = "VISUAL ASSESSMENT PROGRESS",
+                fontFamily = PlusJakartaSans,
+                fontSize   = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color      = TextHint,
+                letterSpacing = 1.sp,
+            )
+            Text(
+                text       = "$score / $MAX_SCORE",
+                fontFamily = PlusJakartaSans,
+                fontSize   = 15.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color      = TextPrimary,
+            )
         }
+        LinearProgressIndicator(
+            progress      = { animatedProgress },
+            modifier      = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(99.dp)),
+            color         = AccentBlue,
+            trackColor    = Color(0xFFF3F4F6),
+            strokeCap     = StrokeCap.Round,
+        )
     }
 }
 
-@Composable
-fun LakeLouiseResultCard(score: Int) {
-    val (label, color, advice) = when {
-        score >= 5 -> Triple("Severe AMS (Score $score)", Color(0xFFD32F2F),
-            "Immediate descent required. Do not continue ascent. Seek medical attention.")
-        score >= 3 -> Triple("Moderate AMS (Score $score)", Color(0xFFFF9800),
-            "Rest at current altitude. Do not ascend. Descend if no improvement in 24h.")
-        score == 2 -> Triple("Mild AMS (Score $score)", Color(0xFFFFEB3B),
-            "Monitor closely. Rest, hydrate, and do not ascend until fully recovered.")
-        else       -> Triple("No AMS (Score $score)", Color(0xFF4CAF50),
-            "Altitude acclimatization appears normal. Continue to hydrate and monitor.")
-    }
+// ─────────────────────────────────────────────────────────────────────────────
+//  Question card
+// ─────────────────────────────────────────────────────────────────────────────
 
+@Composable
+private fun QuestionCard(
+    question: LLSQuestion,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(color.copy(alpha = 0.1f))
-            .border(2.dp, color, RoundedCornerShape(16.dp))
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .background(CardBg)
+            .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+            .padding(horizontal = 18.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        // Header row
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Box(
+                modifier          = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFFF3F4F6)),
+                contentAlignment  = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector        = question.icon,
+                    contentDescription = null,
+                    tint               = TextMuted,
+                    modifier           = Modifier.size(18.dp),
+                )
+            }
             Text(
-                text = "$score",
-                color = color,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 40.sp
+                text       = question.label,
+                fontFamily = PlusJakartaSans,
+                fontSize   = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color      = TextPrimary,
             )
-            Column {
-                Text(label, color = color, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("out of 12", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+        }
+
+        // Option tiles
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            question.options.forEachIndexed { idx, label ->
+                OptionTile(
+                    modifier  = Modifier.weight(1f),
+                    number    = idx,
+                    label     = label,
+                    selected  = selectedIndex == idx,
+                    onClick   = { onSelect(idx) },
+                )
             }
         }
-        HorizontalDivider(color = color.copy(alpha = 0.3f))
-        Text(advice, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, lineHeight = 19.sp)
     }
 }
 
-// ─── Shared helper ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Option tile (0 / 1 / 2 / 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Composable
-fun InfoBanner(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    text: String,
-    color: Color
+private fun OptionTile(
+    modifier: Modifier,
+    number: Int,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
 ) {
-    Row(
+    val bg     = if (selected) SelectedBg else CardBg
+    val border = if (selected) SelectedBg else CardBorder
+    val numCol = if (selected) Color.White else TextPrimary
+    val lblCol = if (selected) Color(0xFF9CA3AF) else TextHint
+
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(2.dp, border, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp, horizontal = 4.dp),
+        horizontalAlignment     = Alignment.CenterHorizontally,
+        verticalArrangement     = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text       = "$number",
+            fontFamily = PlusJakartaSans,
+            fontSize   = 20.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color      = numCol,
+            lineHeight = 20.sp,
+        )
+        Text(
+            text       = label,
+            fontFamily = PlusJakartaSans,
+            fontSize   = 9.sp,
+            fontWeight = FontWeight.SemiBold,
+            color      = lblCol,
+            textAlign  = TextAlign.Center,
+            lineHeight = 12.sp,
+            maxLines   = 2,
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Result card
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ResultCard(result: LLSResult, score: Int) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(color.copy(alpha = 0.1f))
-            .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top
+            .clip(RoundedCornerShape(16.dp))
+            .background(result.bgColor)
+            .border(1.5.dp, result.borderColor, RoundedCornerShape(16.dp))
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
-        Text(text, color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 17.sp)
+        // Tag pill
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .border(1.5.dp, result.accentColor, RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            Text(
+                text       = result.tag,
+                fontFamily = PlusJakartaSans,
+                fontSize   = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color      = result.accentColor,
+                letterSpacing = 0.5.sp,
+            )
+        }
+
+        // Score + label
+        Row(
+            verticalAlignment     = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text       = "$score",
+                fontFamily = PlusJakartaSans,
+                fontSize   = 48.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color      = result.accentColor,
+                lineHeight = 48.sp,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text       = result.label,
+                    fontFamily = PlusJakartaSans,
+                    fontSize   = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color      = result.accentColor,
+                )
+                Text(
+                    text       = "out of $MAX_SCORE",
+                    fontFamily = PlusJakartaSans,
+                    fontSize   = 12.sp,
+                    color      = TextHint,
+                )
+            }
+        }
+
+        HorizontalDivider(color = result.borderColor, thickness = 1.dp)
+
+        Text(
+            text       = result.advice,
+            fontFamily = PlusJakartaSans,
+            fontSize   = 13.sp,
+            color      = Color(0xFF374151),
+            lineHeight = 20.sp,
+        )
     }
 }

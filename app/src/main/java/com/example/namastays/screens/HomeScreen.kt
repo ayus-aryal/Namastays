@@ -1,7 +1,15 @@
 package com.example.namastays.screens
 
+import android.net.Uri
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,28 +24,28 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Hiking
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.Apartment
-import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Explore
-import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.Headset
+import androidx.compose.material.icons.outlined.Hiking
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.LocationOn
-import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,19 +55,25 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -67,16 +81,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
-import android.net.Uri
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.filled.Hiking
-import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Terrain
-import androidx.compose.material.icons.outlined.Hiking
-import androidx.compose.material.icons.outlined.Map
-import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.Terrain
+import kotlinx.coroutines.launch
+
+// ─── Plus Jakarta Sans Font Family ────────────────────────────────────────────
+// Add these font files to res/font/:
+//   plus_jakarta_sans_regular.ttf
+//   plus_jakarta_sans_medium.ttf
+//   plus_jakarta_sans_semibold.ttf
+//   plus_jakarta_sans_bold.ttf
+//   plus_jakarta_sans_extrabold.ttf
+//
+// Then uncomment the block below and remove the fallback:
+//
+// val PlusJakartaSans = FontFamily(
+//     Font(R.font.plus_jakarta_sans_regular,  FontWeight.Normal),
+//     Font(R.font.plus_jakarta_sans_medium,   FontWeight.Medium),
+//     Font(R.font.plus_jakarta_sans_semibold, FontWeight.SemiBold),
+//     Font(R.font.plus_jakarta_sans_bold,     FontWeight.Bold),
+//     Font(R.font.plus_jakarta_sans_extrabold,FontWeight.ExtraBold),
+// )
+//
+// For now, using the system default until font files are added:
+val PlusJakartaSans = FontFamily.Default
 
 // ─── Color Palette ───────────────────────────────────────────────────────────
 val BackgroundColor   = Color(0xFFF2F2F7)
@@ -95,12 +121,6 @@ val HomeIconBg      = Color(0xFFE6F7F0)
 val HomeIconColor   = Color(0xFF34C77A)
 val ToursIconBg     = Color(0xFFFFF4E0)
 val ToursIconColor  = Color(0xFFF5A623)
-val GuidesIconBg    = Color(0xFFF0EBFF)
-val GuidesIconColor = Color(0xFF9B6FE3)
-val PickupIconBg    = Color(0xFFFFEBEB)
-val PickupIconColor = Color(0xFFE34F4F)
-val HelpIconBg      = Color(0xFFE0F7F7)
-val HelpIconColor   = Color(0xFF3ABCBC)
 
 // ─── Data Models ──────────────────────────────────────────────────────────────
 data class Destination(
@@ -124,33 +144,43 @@ data class BottomNavItem(
 
 // ─── Sample Data ──────────────────────────────────────────────────────────────
 val sampleDestinations = listOf(
-    Destination("Pokhara, Nepal", "Lakeside peace awaits", listOf(Color(0xFF2D6A4F), Color(0xFF1B4332))),
-    Destination("Mustang, Nepal", "Adventure in the mountains", listOf(Color(0xFF8D5A2B), Color(0xFF5A3E1B))),
-    Destination("Kathmandu, Nepal", "Culture, heritage & city life", listOf(Color(0xFF6D2B3D), Color(0xFFB5838D))),
-    Destination("Chitwan, Nepal", "Wildlife and jungle escapes", listOf(Color(0xFF264653), Color(0xFF2A9D8F)))
+    Destination("Pokhara, Nepal",    "Lakeside peace awaits",        listOf(Color(0xFF2D6A4F), Color(0xFF1B4332))),
+    Destination("Mustang, Nepal",    "Adventure in the mountains",   listOf(Color(0xFF8D5A2B), Color(0xFF5A3E1B))),
+    Destination("Kathmandu, Nepal",  "Culture, heritage & city life",listOf(Color(0xFF6D2B3D), Color(0xFFB5838D))),
+    Destination("Chitwan, Nepal",    "Wildlife and jungle escapes",  listOf(Color(0xFF264653), Color(0xFF2A9D8F)))
 )
 
+// ─── Only 3 categories (Guides, Pickup, Help removed) ────────────────────────
 val sampleCategories = listOf(
-    Category("Hotels",    Icons.Outlined.Apartment,      HotelIconBg,  HotelIconColor),
-    Category("Homestays", Icons.Outlined.Home,           HomeIconBg,   HomeIconColor),
-    Category("Tours",     Icons.Outlined.Explore,        ToursIconBg,  ToursIconColor),
-    Category("Guides",    Icons.Outlined.MenuBook,       GuidesIconBg, GuidesIconColor),
-    Category("Pickup",    Icons.Outlined.DirectionsCar,  PickupIconBg, PickupIconColor),
-    Category("Help",      Icons.Outlined.Headset,        HelpIconBg,   HelpIconColor)
+    Category("Hotels",    Icons.Outlined.Apartment, HotelIconBg, HotelIconColor),
+    Category("Homestays", Icons.Outlined.Home,      HomeIconBg,  HomeIconColor),
+    Category("Tours",     Icons.Outlined.Explore,   ToursIconBg, ToursIconColor)
 )
 
 val bottomNavItems = listOf(
-    BottomNavItem("Home",     Icons.Filled.Home,           Icons.Outlined.Home),
-    BottomNavItem("Explore",  Icons.Filled.Search,         Icons.Outlined.Search),
-    BottomNavItem("Maps", Icons.Filled.Map,  Icons.Outlined.Map),
-    BottomNavItem("Trek Mode", Icons.Filled.Hiking,       Icons.Outlined.Hiking),
-    BottomNavItem("Safety",  Icons.Filled.Shield,         Icons.Outlined.Shield)
+    BottomNavItem("Home",      Icons.Filled.Home,   Icons.Outlined.Home),
+    BottomNavItem("Explore",   Icons.Filled.Search, Icons.Outlined.Search),
+    BottomNavItem("Maps",      Icons.Filled.Map,    Icons.Outlined.Map),
+    BottomNavItem("Trek Mode", Icons.Filled.Hiking, Icons.Outlined.Hiking),
+    BottomNavItem("Safety",    Icons.Filled.Shield, Icons.Outlined.Shield)
 )
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 @Composable
 fun HomeScreen(navController: NavController) {
-    var selectedDotIndex by remember { mutableStateOf(0) }
+    // Shared LazyListState so dots and row stay in sync
+    val listState   = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
+    // Derive the "most visible" item index from scroll position
+    val selectedDotIndex by remember {
+        derivedStateOf {
+            val firstVisible = listState.firstVisibleItemIndex
+            val offset       = listState.firstVisibleItemScrollOffset
+            // Snap to next card when scrolled past halfway of a card (~146 dp)
+            if (offset > 730) firstVisible + 1 else firstVisible
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -158,7 +188,6 @@ fun HomeScreen(navController: NavController) {
             .verticalScroll(rememberScrollState())
             .background(BackgroundColor)
     ) {
-
         TopBar()
 
         Spacer(Modifier.height(16.dp))
@@ -173,32 +202,37 @@ fun HomeScreen(navController: NavController) {
         Spacer(Modifier.height(24.dp))
 
         SectionHeader(
-            title = "Featured Destinations",
+            title      = "Featured Destinations",
             actionText = "See All",
-            modifier = Modifier.padding(horizontal = 20.dp)
+            modifier   = Modifier.padding(horizontal = 20.dp)
         )
 
         Spacer(Modifier.height(12.dp))
 
         FeaturedDestinationsRow(
-            destinations = sampleDestinations,
-            selectedDot = selectedDotIndex,
-            onDotSelected = { selectedDotIndex = it },
-            navController = navController
+            destinations   = sampleDestinations,
+            listState      = listState,
+            selectedDot    = selectedDotIndex,
+            onDotSelected  = { index ->
+                coroutineScope.launch {
+                    listState.animateScrollToItem(index)
+                }
+            },
+            navController  = navController
         )
 
         Spacer(Modifier.height(24.dp))
 
         SectionHeader(
-            title = "Categories",
+            title    = "Categories",
             modifier = Modifier.padding(horizontal = 20.dp)
         )
 
         Spacer(Modifier.height(12.dp))
 
-        CategoriesGrid(
+        CategoriesRow(
             categories = sampleCategories,
-            modifier = Modifier.padding(horizontal = 20.dp)
+            modifier   = Modifier.padding(horizontal = 20.dp)
         )
 
         Spacer(Modifier.height(16.dp))
@@ -209,20 +243,20 @@ fun HomeScreen(navController: NavController) {
 @Composable
 fun TopBar() {
     Row(
-        modifier            = Modifier
+        modifier              = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalAlignment   = Alignment.CenterVertically,
+        verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text       = "Namastays",
             fontSize   = 26.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.ExtraBold,
+            fontFamily = PlusJakartaSans,
             color      = PrimaryText
         )
 
-        // Avatar with online indicator
         Box {
             Box(
                 modifier = Modifier
@@ -239,7 +273,6 @@ fun TopBar() {
                         .size(24.dp)
                 )
             }
-            // Green online dot
             Box(
                 modifier = Modifier
                     .size(11.dp)
@@ -261,21 +294,22 @@ fun SearchBar(
     var searchQuery by remember { mutableStateOf("") }
 
     OutlinedTextField(
-        value = searchQuery,
+        value         = searchQuery,
         onValueChange = { searchQuery = it },
-        modifier = modifier,
-        placeholder = {
+        modifier      = modifier,
+        placeholder   = {
             Text(
-                text = "Where are you heading?",
-                color = SecondaryText,
-                fontSize = 15.sp
+                text       = "Where are you heading?",
+                color      = SecondaryText,
+                fontSize   = 15.sp,
+                fontFamily = PlusJakartaSans
             )
         },
         leadingIcon = {
             Icon(
-                imageVector = Icons.Outlined.Search,
+                imageVector        = Icons.Outlined.Search,
                 contentDescription = "Search",
-                tint = SecondaryText
+                tint               = SecondaryText
             )
         },
         trailingIcon = {
@@ -283,27 +317,29 @@ fun SearchBar(
                 onClick = {
                     if (searchQuery.isNotBlank()) {
                         val city = Uri.encode(searchQuery.trim())
-                        navController.navigate("search_results/$city"){
-                            launchSingleTop = true
-                        }
+                        navController.navigate("search_results/$city") { launchSingleTop = true }
                     }
                 }
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowForward,
+                    imageVector        = Icons.Default.ArrowForward,
                     contentDescription = "Go",
-                    tint = PrimaryText
+                    tint               = PrimaryText
                 )
             }
         },
-        singleLine = true,
-        shape = RoundedCornerShape(28.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color.Transparent,
+        textStyle = androidx.compose.ui.text.TextStyle(
+            fontFamily = PlusJakartaSans,
+            fontSize   = 15.sp
+        ),
+        singleLine     = true,
+        shape          = RoundedCornerShape(28.dp),
+        colors         = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor   = Color.Transparent,
             unfocusedBorderColor = Color.Transparent,
-            focusedContainerColor = CardWhite,
+            focusedContainerColor   = CardWhite,
             unfocusedContainerColor = CardWhite,
-            cursorColor = PrimaryText
+            cursorColor          = PrimaryText
         ),
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
             imeAction = androidx.compose.ui.text.input.ImeAction.Search
@@ -335,12 +371,14 @@ fun SectionHeader(
             text       = title,
             fontSize   = 18.sp,
             fontWeight = FontWeight.Bold,
+            fontFamily = PlusJakartaSans,
             color      = PrimaryText
         )
         if (actionText != null) {
             Text(
                 text       = actionText,
                 fontSize   = 14.sp,
+                fontFamily = PlusJakartaSans,
                 color      = SecondaryText,
                 modifier   = Modifier.clickable { }
             )
@@ -351,45 +389,59 @@ fun SectionHeader(
 // ─── Featured Destinations Row ────────────────────────────────────────────────
 @Composable
 fun FeaturedDestinationsRow(
-    destinations: List<Destination>,
-    selectedDot: Int,
-    onDotSelected: (Int) -> Unit,
-    navController: NavController
+    destinations  : List<Destination>,
+    listState     : androidx.compose.foundation.lazy.LazyListState,
+    selectedDot   : Int,
+    onDotSelected : (Int) -> Unit,
+    navController : NavController
 ) {
     Column {
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 20.dp),
+            state                 = listState,
+            contentPadding        = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(destinations) { destination ->
                 DestinationCard(
                     destination = destination,
-                    isLarge = destination == destinations.first(),
-                    onClick = {
+                    isLarge     = destination == destinations.first(),
+                    onClick     = {
                         val cityName = Uri.encode(destination.name.substringBefore(",").trim())
-                        navController.navigate("search_results/$cityName") {
-                            launchSingleTop = true
-                        }
+                        navController.navigate("search_results/$cityName") { launchSingleTop = true }
                     }
                 )
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
 
+        // Dot indicators — tapping scrolls carousel to that item
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier              = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment     = Alignment.CenterVertically
         ) {
             destinations.forEachIndexed { i, _ ->
                 val isSelected = i == selectedDot
+
+                // Animate dot width with a spring
+                val dotWidth by animateDpAsState(
+                    targetValue = if (isSelected) 22.dp else 7.dp,
+                    animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
+                    label = "dotWidth"
+                )
+                val dotColor by animateColorAsState(
+                    targetValue = if (isSelected) PrimaryText else Color(0xFFCCCCCC),
+                    animationSpec = tween(250),
+                    label = "dotColor"
+                )
+
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 3.dp)
-                        .size(if (isSelected) 20.dp else 7.dp, 7.dp)
+                        .size(dotWidth, 7.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(if (isSelected) PrimaryText else Color(0xFFCCCCCC))
+                        .background(dotColor)
                         .clickable { onDotSelected(i) }
                 )
             }
@@ -400,31 +452,45 @@ fun FeaturedDestinationsRow(
 // ─── Destination Card ─────────────────────────────────────────────────────────
 @Composable
 fun DestinationCard(
-    destination: Destination,
-    isLarge: Boolean = false,
-    onClick: () -> Unit
+    destination : Destination,
+    isLarge     : Boolean = false,
+    onClick     : () -> Unit
 ) {
-    val cardWidth = if (isLarge) 280.dp else 160.dp
+    val cardWidth  = if (isLarge) 280.dp else 160.dp
     val cardHeight = 200.dp
+
+    // Press-to-scale animation
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue   = if (isPressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = 600f),
+        label         = "cardScale"
+    )
 
     Box(
         modifier = Modifier
             .width(cardWidth)
             .height(cardHeight)
+            .scale(scale)
+            .shadow(elevation = if (isPressed) 2.dp else 6.dp, shape = RoundedCornerShape(18.dp))
             .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.linearGradient(destination.gradientColors)
+            .background(Brush.linearGradient(destination.gradientColors))
+            .clickable(
+                interactionSource = interactionSource,
+                indication        = null,
+                onClick           = onClick
             )
-            .clickable { onClick() }
     ) {
+        // Gradient overlay for text legibility
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.55f)
+                .fillMaxHeight(0.65f)
                 .align(Alignment.BottomCenter)
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color(0x99000000))
+                        colors = listOf(Color.Transparent, Color(0xBB000000))
                     )
                 )
         )
@@ -435,29 +501,31 @@ fun DestinationCard(
                 .padding(14.dp)
         ) {
             Text(
-                text = destination.name,
-                fontSize = if (isLarge) 18.sp else 13.sp,
+                text       = destination.name,
+                fontSize   = if (isLarge) 18.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                fontFamily = PlusJakartaSans,
+                color      = Color.White,
+                maxLines   = 1,
+                overflow   = TextOverflow.Ellipsis
             )
             if (isLarge) {
                 Spacer(Modifier.height(3.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Outlined.LocationOn,
+                        imageVector        = Icons.Outlined.LocationOn,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.85f),
-                        modifier = Modifier.size(13.dp)
+                        tint               = Color.White.copy(alpha = 0.85f),
+                        modifier           = Modifier.size(13.dp)
                     )
                     Spacer(Modifier.width(3.dp))
                     Text(
-                        text = destination.tagline,
-                        fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.85f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text       = destination.tagline,
+                        fontSize   = 12.sp,
+                        fontFamily = PlusJakartaSans,
+                        color      = Color.White.copy(alpha = 0.85f),
+                        maxLines   = 1,
+                        overflow   = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -465,54 +533,60 @@ fun DestinationCard(
     }
 }
 
-// ─── Categories Grid ─────────────────────────────────────────────────────────
+// ─── Categories Row (3 items, single row) ─────────────────────────────────────
 @Composable
-fun CategoriesGrid(
+fun CategoriesRow(
     categories : List<Category>,
     modifier   : Modifier = Modifier
 ) {
-    // 2 rows × 3 columns
-    val rows = categories.chunked(3)
-    Column(
-        modifier              = modifier,
-        verticalArrangement   = Arrangement.spacedBy(12.dp)
+    Row(
+        modifier              = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        rows.forEach { rowItems ->
-            Row(
-                modifier              = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                rowItems.forEach { category ->
-                    CategoryCard(
-                        category = category,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                // Fill remaining slots if row is incomplete
-                repeat(3 - rowItems.size) {
-                    Spacer(Modifier.weight(1f))
-                }
-            }
+        categories.forEach { category ->
+            CategoryCard(
+                category = category,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
 
-// ─── Category Card ────────────────────────────────────────────────────────────
+// ─── Category Card (with press-scale animation) ───────────────────────────────
 @Composable
 fun CategoryCard(
     category : Category,
     modifier : Modifier = Modifier
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue   = if (isPressed) 0.93f else 1f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = 700f),
+        label         = "categoryScale"
+    )
+    val elevation by animateDpAsState(
+        targetValue   = if (isPressed) 1.dp else 3.dp,
+        animationSpec = tween(150),
+        label         = "categoryElevation"
+    )
+
     Column(
         modifier            = modifier
+            .scale(scale)
+            .shadow(elevation = elevation, shape = RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             .background(CardWhite)
-            .clickable { }
+            .clickable(
+                interactionSource = interactionSource,
+                indication        = null,
+                onClick           = {}
+            )
             .padding(vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier        = Modifier
+            modifier         = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
                 .background(category.iconBg),
@@ -529,7 +603,8 @@ fun CategoryCard(
         Text(
             text       = category.label,
             fontSize   = 13.sp,
-            fontWeight = FontWeight.Medium,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = PlusJakartaSans,
             color      = PrimaryText
         )
     }
@@ -562,7 +637,8 @@ fun TravelerBottomNavBar(
                     Text(
                         text       = item.label,
                         fontSize   = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        fontFamily = PlusJakartaSans
                     )
                 },
                 colors = NavigationBarItemDefaults.colors(

@@ -140,12 +140,12 @@ fun MainScreen() {
             }
 
             composable(SafetyRoutes.SOS)          { SOSScreen(navController) }
-            composable(SafetyRoutes.AMS)          { AMSCheckerScreen(navController) }
             composable(SafetyRoutes.LAKE_LOUISE)  { LakeLouiseScreen(navController) }
             composable(SafetyRoutes.CONTACTS)     { EmergencyContactsScreen(navController) }
             composable(SafetyRoutes.ADD_CONTACT)  { AddContactScreen(navController) }
             composable(SafetyRoutes.COMPASS)      { CompassScreen(navController) }
             composable(SafetyRoutes.TORCH)        { TorchScreen(navController) }
+            composable(SafetyRoutes.LOCAL_BODIES) { EmergencySOSScreen(navController) }
         }
     }
 }

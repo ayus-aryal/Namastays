@@ -12,12 +12,23 @@ import com.google.android.gms.location.Priority
 
 object SosManager {
 
+    var isSosActive = false
+        private set
+
+    fun cancelSos(context: Context) {
+        isSosActive = false
+        BleManager.stopAdvertising()
+        android.util.Log.d("SOS_BLE", "SOS cancelled, BLE advertising stopped")
+    }
+
     @SuppressLint("MissingPermission")
     fun sendSosMessages(
         context: Context,
         contacts: List<EmergencyContactEntity>,
         onResult: (success: Boolean, message: String) -> Unit
     ) {
+        isSosActive = true
+
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
 
         fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
@@ -25,10 +36,26 @@ object SosManager {
                 val locationText = if (location != null)
                     "https://maps.google.com/?q=${location.latitude},${location.longitude}"
                 else "Location unavailable"
+
+                // ── SMS ───────────────────────────────────────────────────────
                 sendSmsToAll(context, contacts, locationText, onResult)
+
+                // ── BLE broadcast ─────────────────────────────────────────────
+                if (BlePermissionHelper.canAdvertise(context)) {
+                    BleManager.startAdvertising(
+                        context = context,
+                        latitude = location?.latitude ?: 0.0,
+                        longitude = location?.longitude ?: 0.0
+                    ) { _, bleMessage ->
+                        android.util.Log.d("SOS_BLE", bleMessage)
+                    }
+                }
             }
             .addOnFailureListener {
                 sendSmsToAll(context, contacts, "Location unavailable", onResult)
+                if (BlePermissionHelper.canAdvertise(context)) {
+                    BleManager.startAdvertising(context, 0.0, 0.0) { _, _ -> }
+                }
             }
     }
 
@@ -49,12 +76,12 @@ object SosManager {
         val backgroundSuccess = tryBackgroundSms(context, contacts, message)
 
         if (backgroundSuccess) {
-            onResult(true, "✅ SOS sent to ${contacts.size} contact(s)")
+            onResult(true, "SOS sent to ${contacts.size} contact(s)")
         } else {
             // Fallback: open SMS app with all contacts pre-filled
             android.util.Log.w("SOS_DEBUG", "Background SMS failed, falling back to SMS Intent")
             openSmsIntent(context, contacts, message)
-            onResult(true, "✅ SMS app opened — tap Send to alert your contacts")
+            onResult(true, "SMS app opened — tap Send to alert your contacts")
         }
     }
 

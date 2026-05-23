@@ -1,6 +1,5 @@
 package com.example.namastays.screens
 
-
 import android.content.Context
 import android.hardware.*
 import android.hardware.camera2.CameraManager
@@ -19,56 +18,78 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.*
+import androidx.compose.ui.text.style.*
 import androidx.compose.ui.unit.*
 import androidx.navigation.NavController
 import kotlin.math.*
 
+// ─── Shared color palette (mirrors SafetyHomeScreen) ─────────────────────────
+private val BgPage    = Color(0xFFF2F4F7)
+private val BgCard    = Color.White
+private val NavyDark  = Color(0xFF0D2137)
+private val NavyMid   = Color(0xFF1A3A52)
+private val SubText   = Color(0xFF8A99A8)
+private val RedNorth  = Color(0xFFE53935)
+private val BlueAccent = Color(0xFF3B82F6)
+
 // ═════════════════════════════════════════════════════════════════════════════
-//  COMPASS SCREEN — Immersive full-screen compass using SensorManager
+//  COMPASS SCREEN
 // ═════════════════════════════════════════════════════════════════════════════
 
 @Composable
 fun CompassScreen(navController: NavController) {
     val context = LocalContext.current
-    var azimuth by remember { mutableStateOf(0f) }
+    var azimuth  by remember { mutableStateOf(0f) }
+    var altitude by remember { mutableStateOf<Float?>(null) }
+    var accuracy by remember { mutableStateOf("--") }
     val smoothAzimuth = remember { Animatable(0f) }
 
-    // Sensor setup
+    // ── Sensors ───────────────────────────────────────────────────────────────
     DisposableEffect(Unit) {
-        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-        val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val sm = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val magnetometer  = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        val accelerometer = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val pressure      = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
 
-        var gravityValues = FloatArray(3)
-        var geoMagValues  = FloatArray(3)
+        var gravity = FloatArray(3)
+        var geo     = FloatArray(3)
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 when (event.sensor.type) {
-                    Sensor.TYPE_ACCELEROMETER   -> gravityValues = event.values.clone()
-                    Sensor.TYPE_MAGNETIC_FIELD  -> geoMagValues  = event.values.clone()
+                    Sensor.TYPE_ACCELEROMETER  -> gravity = event.values.clone()
+                    Sensor.TYPE_MAGNETIC_FIELD -> geo     = event.values.clone()
+                    Sensor.TYPE_PRESSURE       -> {
+                        altitude = SensorManager.getAltitude(
+                            SensorManager.PRESSURE_STANDARD_ATMOSPHERE, event.values[0]
+                        )
+                    }
                 }
-                val R = FloatArray(9)
-                val I = FloatArray(9)
-                if (SensorManager.getRotationMatrix(R, I, gravityValues, geoMagValues)) {
-                    val orientation = FloatArray(3)
-                    SensorManager.getOrientation(R, orientation)
-                    val degrees = Math.toDegrees(orientation[0].toDouble()).toFloat()
-                    azimuth = if (degrees < 0) degrees + 360 else degrees
+                val R = FloatArray(9); val I = FloatArray(9)
+                if (SensorManager.getRotationMatrix(R, I, gravity, geo)) {
+                    val ori = FloatArray(3)
+                    SensorManager.getOrientation(R, ori)
+                    val deg = Math.toDegrees(ori[0].toDouble()).toFloat()
+                    azimuth = if (deg < 0) deg + 360 else deg
                 }
             }
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            override fun onAccuracyChanged(sensor: Sensor?, acc: Int) {
+                accuracy = when (acc) {
+                    SensorManager.SENSOR_STATUS_ACCURACY_HIGH   -> "High"
+                    SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "Medium"
+                    SensorManager.SENSOR_STATUS_ACCURACY_LOW    -> "Low"
+                    else -> "Poor"
+                }
+            }
         }
 
-        sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
-        sensorManager.registerListener(listener, magnetometer,  SensorManager.SENSOR_DELAY_UI)
+        sm.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
+        sm.registerListener(listener, magnetometer,  SensorManager.SENSOR_DELAY_UI)
+        pressure?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_NORMAL) }
 
-        onDispose {
-            sensorManager.unregisterListener(listener)
-        }
+        onDispose { sm.unregisterListener(listener) }
     }
 
-    // Animate rotation
     LaunchedEffect(azimuth) {
         smoothAzimuth.animateTo(
             targetValue = azimuth,
@@ -77,159 +98,307 @@ fun CompassScreen(navController: NavController) {
     }
 
     val direction = getCardinalDirection(smoothAzimuth.value)
-    val compassColor = when(direction) {
-        "N" -> Color(0xFFFF5252)
-        else -> Color.White
-    }
 
-    Box(
+    // ── UI ────────────────────────────────────────────────────────────────────
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D0D1A))
+            .background(BgPage)
+            .statusBarsPadding()
+            .padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally
+
+        // Top bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Top bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { navController.popBackStack() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                Text("COMPASS", color = Color.White.copy(alpha = 0.5f), letterSpacing = 3.sp, fontSize = 14.sp)
-                Spacer(modifier = Modifier.weight(1f))
-                Spacer(modifier = Modifier.width(48.dp))
+            IconButton(onClick = { navController.popBackStack() }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = NavyDark)
             }
-
-            Spacer(modifier = Modifier.weight(0.5f))
-
-            // ── Compass rose canvas ───────────────────────────────────────────
-            Box(
-                modifier = Modifier
-                    .size(300.dp)
-                    .rotate(-smoothAzimuth.value),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawCompassRose()
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // ── Bearing readout ───────────────────────────────────────────────
-            Text(
-                text = direction,
-                color = compassColor,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 72.sp,
-                letterSpacing = 4.sp
-            )
-            Text(
-                text = "${smoothAzimuth.value.toInt()}°",
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Light
-            )
-
             Spacer(modifier = Modifier.weight(1f))
+        }
 
-            // ── Cardinal strip ────────────────────────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp, vertical = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+        // "COMPASS" label
+        Text(
+            "COMPASS",
+            color = SubText,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 3.sp
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── Full compass rose ─────────────────────────────────────────────────
+        Box(
+            modifier = Modifier.size(300.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Rotating rose canvas
+            val currentAzimuth = smoothAzimuth.value
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val cx       = size.width / 2
+                val cy       = size.height / 2
+                val outerR   = size.minDimension / 2f * 0.95f
+                val innerR   = size.minDimension / 2f * 0.50f
+
+                // ── Outer white circle ────────────────────────────────────
+                drawCircle(Color.White, outerR, Offset(cx, cy))
+                drawCircle(
+                    Color(0xFFDDE3EA), outerR, Offset(cx, cy),
+                    style = Stroke(1.5f)
+                )
+
+                // ── Rotating ring (ticks + labels) ────────────────────────
+                withTransform({ rotate(-currentAzimuth, Offset(cx, cy)) }) {
+
+                    // Tick marks every 5°
+                    for (deg in 0 until 360 step 5) {
+                        val rad       = Math.toRadians(deg.toDouble())
+                        val s         = sin(rad).toFloat()
+                        val c         = cos(rad).toFloat()
+                        val isMajor   = deg % 30 == 0
+                        val isCardinal= deg % 90 == 0
+                        val tickLen = when {
+                            isCardinal -> outerR * 0.14f
+                            isMajor    -> outerR * 0.10f
+                            else       -> outerR * 0.05f
+                        }
+                        val strokeW = when {
+                            isCardinal -> 3f
+                            isMajor    -> 2f
+                            else       -> 1f
+                        }
+                        val alpha = when {
+                            isCardinal -> 0.70f
+                            isMajor    -> 0.45f
+                            else       -> 0.20f
+                        }
+                        drawLine(
+                            color       = NavyDark.copy(alpha = alpha),
+                            start       = Offset(cx + (outerR - tickLen) * s, cy - (outerR - tickLen) * c),
+                            end         = Offset(cx + outerR * s,              cy - outerR * c),
+                            strokeWidth = strokeW
+                        )
+                    }
+
+                    // Degree labels (every 30°, skip cardinals 0/90/180/270)
+                    val labelDegs = listOf(30, 60, 120, 150, 210, 240, 300, 330)
+                    drawIntoCanvas { canvas ->
+                        val textPaint = android.graphics.Paint().apply {
+                            isAntiAlias = true
+                            textAlign   = android.graphics.Paint.Align.CENTER
+                            textSize    = outerR * 0.115f
+                            color       = android.graphics.Color.argb(120, 13, 33, 55)
+                            typeface    = android.graphics.Typeface.DEFAULT
+                        }
+                        for (deg in labelDegs) {
+                            val rad = Math.toRadians(deg.toDouble())
+                            val r   = outerR * 0.76f
+                            val x   = cx + r * sin(rad).toFloat()
+                            val y   = cy - r * cos(rad).toFloat() + textPaint.textSize * 0.35f
+                            canvas.nativeCanvas.drawText(deg.toString(), x, y, textPaint)
+                        }
+
+                        // Cardinal letters N E S W
+                        val cardPaint = android.graphics.Paint().apply {
+                            isAntiAlias    = true
+                            textAlign      = android.graphics.Paint.Align.CENTER
+                            textSize       = outerR * 0.175f
+                            isFakeBoldText = true
+                            typeface       = android.graphics.Typeface.DEFAULT_BOLD
+                        }
+                        val cardR      = outerR * 0.76f
+                        val cardOffset = cardPaint.textSize * 0.38f
+
+                        // N – red
+                        cardPaint.color = android.graphics.Color.argb(255, 229, 57, 53)
+                        canvas.nativeCanvas.drawText("N", cx, cy - cardR + cardOffset, cardPaint)
+                        // S, E, W – dark navy
+                        cardPaint.color = android.graphics.Color.argb(200, 13, 33, 55)
+                        canvas.nativeCanvas.drawText("S", cx,          cy + cardR  + cardOffset, cardPaint)
+                        canvas.nativeCanvas.drawText("E", cx + cardR,  cy          + cardOffset, cardPaint)
+                        canvas.nativeCanvas.drawText("W", cx - cardR,  cy          + cardOffset, cardPaint)
+                    }
+                }
+
+                // ── Inner light circle (center readout backdrop) ──────────
+                drawCircle(Color(0xFFF2F4F7), innerR, Offset(cx, cy))
+                drawCircle(
+                    Color(0xFFDDE3EA), innerR, Offset(cx, cy),
+                    style = Stroke(1f)
+                )
+            }
+
+            // ── Center readout (fixed, not rotating) ──────────────────────
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                listOf("N" to 0f, "E" to 90f, "S" to 180f, "W" to 270f).forEach { (card, deg) ->
-                    val diff = abs(((smoothAzimuth.value - deg + 360) % 360)).let { if (it > 180) 360 - it else it }
-                    val alpha = (1f - diff / 90f).coerceIn(0.2f, 1f)
+                Text(
+                    text = "${smoothAzimuth.value.toInt()}°",
+                    color = NavyDark,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 36.sp
+                )
+                Text(
+                    text = direction,
+                    color = BlueAccent,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 20.sp,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            // ── Fixed red triangle pointer at top ─────────────────────────
+            Canvas(
+                modifier = Modifier
+                    .size(18.dp, 14.dp)
+                    .align(Alignment.TopCenter)
+                    .offset(y = 4.dp)
+            ) {
+                val path = Path().apply {
+                    moveTo(size.width / 2, 0f)
+                    lineTo(size.width, size.height)
+                    lineTo(0f, size.height)
+                    close()
+                }
+                drawPath(path, RedNorth)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        // ── Info cards row ────────────────────────────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 28.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Altitude
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = BgCard),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ArrowUpward,
+                        contentDescription = null,
+                        tint = BlueAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
                     Text(
-                        card,
-                        color = if (card == "N") Color(0xFFFF5252).copy(alpha = alpha) else Color.White.copy(alpha = alpha),
-                        fontWeight = FontWeight.Bold,
+                        text = altitude?.let { "${it.toInt()}m" } ?: "--",
+                        color = NavyDark,
+                        fontWeight = FontWeight.ExtraBold,
                         fontSize = 16.sp
+                    )
+                    Text(
+                        "Altitude",
+                        color = SubText,
+                        fontSize = 11.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
+
+            // Accuracy
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = BgCard),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = null,
+                        tint = BlueAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = accuracy,
+                        color = NavyDark,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 16.sp
+                    )
+                    Text(
+                        "Accuracy",
+                        color = SubText,
+                        fontSize = 11.sp,
+                        letterSpacing = 0.5.sp
                     )
                 }
             }
         }
 
-        // Fixed north pointer at top
-        Icon(
-            Icons.Default.ArrowUpward,
-            contentDescription = "North",
-            tint = Color(0xFFFF5252),
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ── Calibration Tips card ─────────────────────────────────────────────
+        Card(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = 120.dp)
-                .size(24.dp)
-        )
-    }
-}
-
-fun DrawScope.drawCompassRose() {
-    val cx = size.width / 2
-    val cy = size.height / 2
-    val radius = size.minDimension / 2
-
-    // Outer circle
-    drawCircle(color = Color(0xFF1E2A45), radius = radius * 0.95f, center = Offset(cx, cy))
-    drawCircle(
-        color = Color.White.copy(alpha = 0.15f),
-        radius = radius * 0.95f,
-        center = Offset(cx, cy),
-        style = Stroke(width = 2f)
-    )
-
-    // Tick marks
-    for (i in 0 until 360 step 5) {
-        val rad = Math.toRadians(i.toDouble())
-        val isMajor = i % 45 == 0
-        val isMinor = i % 15 == 0
-        val tickLen = when {
-            isMajor -> radius * 0.15f
-            isMinor -> radius * 0.10f
-            else    -> radius * 0.05f
+                .fillMaxWidth()
+                .padding(bottom = 24.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = BgCard),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null,
+                        tint = NavyDark.copy(0.7f), modifier = Modifier.size(18.dp))
+                    Text("Calibration Tips", color = NavyDark,
+                        fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+                CalibTip(Icons.Default.Refresh,      "Move phone in a figure-8 to calibrate")
+                CalibTip(Icons.Default.PhoneAndroid,  "Hold phone flat for best accuracy")
+                CalibTip(Icons.Default.Block,         "Stay away from metal objects & electronics")
+                CalibTip(Icons.Default.GpsFixed,      "True north needs GPS — best outdoors")
+            }
         }
-        val startR = radius * 0.95f - tickLen
-        val endR   = radius * 0.95f
-        drawLine(
-            color = Color.White.copy(alpha = if (isMajor) 0.9f else 0.4f),
-            start = Offset(cx + startR * sin(rad).toFloat(), cy - startR * cos(rad).toFloat()),
-            end   = Offset(cx + endR   * sin(rad).toFloat(), cy - endR   * cos(rad).toFloat()),
-            strokeWidth = if (isMajor) 3f else 1.5f
-        )
     }
-
-    // N pointer (red)
-    val northPath = Path().apply {
-        moveTo(cx, cy - radius * 0.7f)
-        lineTo(cx - radius * 0.08f, cy)
-        lineTo(cx, cy - radius * 0.3f)
-        close()
-    }
-    drawPath(northPath, color = Color(0xFFFF5252))
-
-    // S pointer (white)
-    val southPath = Path().apply {
-        moveTo(cx, cy + radius * 0.7f)
-        lineTo(cx + radius * 0.08f, cy)
-        lineTo(cx, cy + radius * 0.3f)
-        close()
-    }
-    drawPath(southPath, color = Color.White.copy(alpha = 0.9f))
-
-    // Center dot
-    drawCircle(color = Color(0xFFFF5252), radius = 8f, center = Offset(cx, cy))
-    drawCircle(color = Color.White, radius = 4f, center = Offset(cx, cy))
 }
 
+@Composable
+private fun CalibTip(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(icon, contentDescription = null,
+            tint = SubText, modifier = Modifier.size(16.dp))
+        Text(text, color = SubText, fontSize = 12.sp, lineHeight = 17.sp)
+    }
+}
+
+// Keep helper functions (unchanged)
 fun getCardinalDirection(azimuth: Float): String = when {
     azimuth < 22.5  || azimuth >= 337.5 -> "N"
     azimuth < 67.5  -> "NE"
@@ -243,28 +412,17 @@ fun getCardinalDirection(azimuth: Float): String = when {
 
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  TORCH SCREEN — Toggle flashlight + strobe mode
+//  TORCH SCREEN
 // ═════════════════════════════════════════════════════════════════════════════
 
 @Composable
 fun TorchScreen(navController: NavController) {
     val context = LocalContext.current
-    var isTorchOn by remember { mutableStateOf(false) }
+    var isTorchOn     by remember { mutableStateOf(false) }
     var strobeEnabled by remember { mutableStateOf(false) }
-    var strobeRate by remember { mutableStateOf(500L) } // ms interval
+    var strobeRate    by remember { mutableStateOf(500L) }   // ms → Hz = 1000/strobeRate
 
-    // Glow animation when torch is ON
-    val glowAlpha by rememberInfiniteTransition(label = "glow").animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = EaseInOut),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glow_alpha"
-    )
-
-    // Strobe effect
+    // Strobe effect (logic unchanged)
     LaunchedEffect(strobeEnabled, strobeRate) {
         if (strobeEnabled) {
             while (strobeEnabled) {
@@ -276,107 +434,120 @@ fun TorchScreen(navController: NavController) {
         }
     }
 
-    // Turn off torch on leave
     DisposableEffect(Unit) {
-        onDispose {
-            setTorch(context, false)
-        }
+        onDispose { setTorch(context, false) }
     }
 
-    Box(
+    // ── UI ────────────────────────────────────────────────────────────────────
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                if (isTorchOn) Color(0xFF1A1A00) else Color(0xFF1A1A2E)
-            )
+            .background(BgPage)
+            .statusBarsPadding()
+            .padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        Column(
+
+        // Top bar
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+                .fillMaxWidth()
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            ScreenHeader("Torch", onBack = {
+            IconButton(onClick = {
                 setTorch(context, false)
                 navController.popBackStack()
-            })
-
+            }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = NavyDark)
+            }
             Spacer(modifier = Modifier.weight(1f))
+        }
 
-            // ── Glow effect ───────────────────────────────────────────────────
-            if (isTorchOn) {
-                Box(
-                    modifier = Modifier
-                        .size(250.dp)
-                        .alpha(glowAlpha)
-                        .background(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0xFFFFFFCC).copy(alpha = 0.5f),
-                                    Color.Transparent
-                                )
-                            ),
-                            shape = CircleShape
-                        )
+        Spacer(modifier = Modifier.weight(1f))
+
+        // ── Neumorphic torch button ───────────────────────────────────────────
+        Box(
+            modifier = Modifier
+                .size(200.dp)
+                .clip(CircleShape)
+                .background(
+                    if (isTorchOn)
+                        Brush.radialGradient(listOf(Color(0xFFFFF9C4), Color(0xFFFFEB3B).copy(alpha = 0.3f)))
+                    else
+                        Brush.radialGradient(listOf(Color(0xFFFFFFFF), Color(0xFFE8ECF0)))
+                )
+                .shadow(if (isTorchOn) 12.dp else 6.dp, CircleShape, ambientColor = Color(0xFFB0BEC5))
+                .clickable {
+                    isTorchOn = !isTorchOn
+                    strobeEnabled = false
+                    setTorch(context, isTorchOn)
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    if (isTorchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
+                    contentDescription = "Torch",
+                    tint = if (isTorchOn) Color(0xFFF59E0B) else NavyMid.copy(alpha = 0.5f),
+                    modifier = Modifier.size(52.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    if (isTorchOn) "ON" else "OFF",
+                    color = if (isTorchOn) Color(0xFFF59E0B) else NavyMid.copy(alpha = 0.5f),
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 16.sp,
+                    letterSpacing = 3.sp
                 )
             }
+        }
 
-            // ── Main Torch Button ─────────────────────────────────────────────
-            Box(
-                modifier = Modifier
-                    .size(160.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isTorchOn)
-                            Brush.radialGradient(listOf(Color(0xFFFFEB3B), Color(0xFFFFA000)))
-                        else
-                            Brush.radialGradient(listOf(Color(0xFF2E2E2E), Color(0xFF1A1A1A)))
-                    )
-                    .border(3.dp, if (isTorchOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.1f), CircleShape)
-                    .clickable {
-                        isTorchOn = !isTorchOn
-                        strobeEnabled = false
-                        setTorch(context, isTorchOn)
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        if (isTorchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
-                        contentDescription = "Torch",
-                        tint = if (isTorchOn) Color(0xFF1A1A00) else Color.White.copy(alpha = 0.4f),
-                        modifier = Modifier.size(56.dp)
-                    )
-                    Text(
-                        if (isTorchOn) "ON" else "OFF",
-                        color = if (isTorchOn) Color(0xFF1A1A00) else Color.White.copy(alpha = 0.4f),
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 18.sp,
-                        letterSpacing = 3.sp
-                    )
-                }
-            }
+        Spacer(modifier = Modifier.height(20.dp))
 
-            Spacer(modifier = Modifier.weight(1f))
+        // Hint text
+        Text(
+            "Tap the center button to activate\nyour flashlight.",
+            color = SubText,
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp
+        )
 
-            // ── Strobe section ────────────────────────────────────────────────
+        Spacer(modifier = Modifier.weight(1f))
+
+        // ── Strobe card ───────────────────────────────────────────────────────
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 28.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = BgCard),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF16213E))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // Strobe toggle row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("Strobe Mode", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text("SOS emergency strobe", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+                        Text(
+                            "Strobe Mode",
+                            color = NavyDark,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            "SOS emergency strobe lighting",
+                            color = SubText,
+                            fontSize = 12.sp
+                        )
                     }
                     Switch(
                         checked = strobeEnabled,
@@ -384,43 +555,67 @@ fun TorchScreen(navController: NavController) {
                             strobeEnabled = it
                             if (!it) setTorch(context, false)
                         },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFFFEB3B), checkedTrackColor = Color(0xFFFFA000))
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor  = Color.White,
+                            checkedTrackColor  = BlueAccent,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = Color(0xFFDDE3EA)
+                        )
                     )
                 }
 
-                if (strobeEnabled) {
+                // Frequency row (always visible)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        "Speed: ${1000L / strobeRate} Hz",
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 13.sp
+                        "FREQUENCY",
+                        color = SubText,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.sp
                     )
-                    Slider(
-                        value = strobeRate.toFloat(),
-                        onValueChange = { strobeRate = it.toLong() },
-                        valueRange = 100f..1000f,
-                        steps = 8,
-                        colors = SliderDefaults.colors(activeTrackColor = Color(0xFFFFEB3B), thumbColor = Color(0xFFFFEB3B))
+                    Text(
+                        "${1000L / strobeRate} Hz",
+                        color = BlueAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Fast (10Hz)", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp)
-                        Text("Slow (1Hz)", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp)
-                    }
+                }
+
+                // Slider
+                Slider(
+                    value = strobeRate.toFloat(),
+                    onValueChange = { strobeRate = it.toLong() },
+                    valueRange = 100f..1000f,
+                    steps = 8,
+                    colors = SliderDefaults.colors(
+                        activeTrackColor   = BlueAccent,
+                        inactiveTrackColor = Color(0xFFDDE3EA),
+                        thumbColor         = Color(0xFFF59E0B)
+                    )
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Fast (10Hz)", color = SubText, fontSize = 11.sp)
+                    Text("Slow (1Hz)",  color = SubText, fontSize = 11.sp)
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
+// setTorch helper (unchanged)
 fun setTorch(context: Context, on: Boolean) {
     try {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
-        cameraManager.setTorchMode(cameraId, on)
+        val cam = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val id  = cam.cameraIdList.firstOrNull() ?: return
+        cam.setTorchMode(id, on)
     } catch (e: Exception) {
         e.printStackTrace()
     }
