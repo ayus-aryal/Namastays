@@ -1,0 +1,153 @@
+{
+  "version": 8,
+  "name": "Namastays Trek Style",
+  "sources": {
+    "trek-tiles": {
+      "type": "vector",
+      "tiles": ["{trek_tiles_url}"],
+      "minzoom": 8,
+      "maxzoom": 15
+    }
+  },
+  "glyphs": "http://localhost:8887/fonts/{fontstack}/{range}.pbf",
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#f8f4f0"
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#a8d5e2"
+      }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "trek-tiles",
+      "source-layer": "waterway",
+      "paint": {
+        "line-color": "#a8d5e2",
+        "line-width": 1.5
+      }
+    },
+    {
+      "id": "landcover-forest",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "landcover",
+      "filter": ["==", "class", "forest"],
+      "paint": {
+        "fill-color": "#c8e6c2",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "landcover-grass",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "landcover",
+      "filter": ["==", "class", "grass"],
+      "paint": {
+        "fill-color": "#dff0d8",
+        "fill-opacity": 0.6
+      }
+    },
+    {
+      "id": "landuse",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "landuse",
+      "paint": {
+        "fill-color": "#e8e0d8",
+        "fill-opacity": 0.5
+      }
+    },
+    {
+      "id": "roads-minor",
+      "type": "line",
+      "source": "trek-tiles",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "minor", "service", "track"],
+      "paint": {
+        "line-color": "#d4c5a9",
+        "line-width": 1.0
+      }
+    },
+    {
+      "id": "roads-main",
+      "type": "line",
+      "source": "trek-tiles",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "primary", "secondary", "tertiary"],
+      "paint": {
+        "line-color": "#c8a87a",
+        "line-width": 2.0
+      }
+    },
+    {
+      "id": "paths",
+      "type": "line",
+      "source": "trek-tiles",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "path", "footway"],
+      "paint": {
+        "line-color": "#a0855b",
+        "line-width": 1.2,
+        "line-dasharray": [2, 2]
+      }
+    },
+    {
+      "id": "buildings",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "building",
+      "paint": {
+        "fill-color": "#d4c5a9",
+        "fill-opacity": 0.6
+      }
+    },
+    {
+      "id": "place-labels",
+      "type": "symbol",
+      "source": "trek-tiles",
+      "source-layer": "place",
+      "filter": ["in", "class", "village", "town", "city"],
+      "layout": {
+        "text-field": "{name}",
+        "text-font": ["Open Sans Regular"],
+        "text-size": 12,
+        "text-anchor": "center"
+      },
+      "paint": {
+        "text-color": "#333333",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.5
+      }
+    },
+    {
+      "id": "peak-labels",
+      "type": "symbol",
+      "source": "trek-tiles",
+      "source-layer": "mountain_peak",
+      "layout": {
+        "text-field": "{name}",
+        "text-font": ["Open Sans Regular"],
+        "text-size": 11,
+        "text-anchor": "top",
+        "text-offset": [0, 0.5]
+      },
+      "paint": {
+        "text-color": "#5c4033",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.5
+      }
+    }
+  ]
+}

@@ -10,9 +10,9 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.example.namastays.trek.presentataion.map.TrekMapScreen
-import com.example.namastays.trek.presentation.list.TrekListScreen
+import com.example.namastays.trek.presentataion.list.TrekListScreen
 import com.example.namastays.trek.presentation.detail.TrekDetailScreen
+import com.example.namastays.trek.presentataion.map.TrekMapScreen
 
 @RequiresApi(Build.VERSION_CODES.Q)
 @Composable

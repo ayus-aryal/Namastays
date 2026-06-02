@@ -1,0 +1,99 @@
+{
+  "version": 8,
+  "name": "Namastays Trail View",
+  "sources": {
+    "trek-tiles": {
+      "type": "vector",
+      "tiles": ["{trek_tiles_url}"],
+      "minzoom": 8,
+      "maxzoom": 16
+    }
+  },
+  "glyphs": "http://localhost:8887/fonts/{fontstack}/{range}.pbf",
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#F0EDE8"
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#B8D4E8"
+      }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "trek-tiles",
+      "source-layer": "waterway",
+      "paint": {
+        "line-color": "#B8D4E8",
+        "line-width": 1.0
+      }
+    },
+    {
+      "id": "landcover-forest",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "landcover",
+      "filter": ["==", "class", "forest"],
+      "paint": {
+        "fill-color": "#D4E8C8",
+        "fill-opacity": 0.7
+      }
+    },
+    {
+      "id": "landcover-grass",
+      "type": "fill",
+      "source": "trek-tiles",
+      "source-layer": "landcover",
+      "filter": ["==", "class", "grass"],
+      "paint": {
+        "fill-color": "#E0EDD0",
+        "fill-opacity": 0.5
+      }
+    },
+    {
+      "id": "peak-labels",
+      "type": "symbol",
+      "source": "trek-tiles",
+      "source-layer": "mountain_peak",
+      "layout": {
+        "text-field": "{name}",
+        "text-font": ["Open Sans Regular"],
+        "text-size": 10,
+        "text-anchor": "top",
+        "text-offset": [0, 0.5]
+      },
+      "paint": {
+        "text-color": "#666666",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.2
+      }
+    },
+    {
+      "id": "place-labels",
+      "type": "symbol",
+      "source": "trek-tiles",
+      "source-layer": "place",
+      "filter": ["in", "class", "village", "town"],
+      "layout": {
+        "text-field": "{name}",
+        "text-font": ["Open Sans Regular"],
+        "text-size": 11,
+        "text-anchor": "center"
+      },
+      "paint": {
+        "text-color": "#555555",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.5
+      }
+    }
+  ]
+}

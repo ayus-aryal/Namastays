@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.androidx.navigation.runtime.ktx)
 
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.compose.foundation)
 
     testImplementation(libs.junit)
 
@@ -138,4 +139,11 @@ dependencies {
     // MapLibre
     implementation("org.maplibre.gl:android-sdk:11.8.8")
     implementation("org.maplibre.gl:android-plugin-annotation-v9:3.0.0")
+
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    implementation("androidx.compose.runtime:runtime-livedata:1.7.8")
+
 }

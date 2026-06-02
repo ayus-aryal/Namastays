@@ -1,80 +1,130 @@
-package com.example.namastays.trek.presentation.list
+package com.example.namastays.trek.presentataion.list
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.example.namastays.repository.TrekRepository
+import com.example.namastays.trek.TrekDatabase
+import com.example.namastays.trek.TrekTheme
+import com.example.namastays.trek.domain.TrekItem
+import com.example.namastays.trek.util.MBTilesLoader
+import com.example.namastays.viewmodel.TreksViewModel
 
-data class TrekItem(
-    val id: String,
-    val name: String,
-    val region: String,
-    val difficulty: String,
-    val durationDays: Int,
-    val maxElevation: Int,
-    val distanceKm: Int,
-    val description: String,
-    val isDownloaded: Boolean = false
-)
-
-// Hardcoded for now — will come from API in later phase
-val sampleTreks = listOf(
-    TrekItem(
-        id = "ghorepani-poonhill",
-        name = "Ghorepani Poon Hill",
-        region = "Gandaki Province",
-        difficulty = "Easy",
-        durationDays = 4,
-        maxElevation = 3210,
-        distanceKm = 42,
-        description = "Classic short trek with stunning Annapurna sunrise views from Poon Hill. Perfect for first-time trekkers."
-    )
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TrekListScreen(navController: NavController) {
+    val context = LocalContext.current
+    val db = remember { TrekDatabase.getInstance(context) }
+    val viewModel: TreksViewModel = viewModel(
+        factory = TreksViewModel.Factory(TrekRepository(db.trekCacheDao()))
+    )
+
+    val treks by viewModel.treks.collectAsState()
+    var selectedFilter by remember { mutableStateOf("All") }
+    val filters = listOf("All", "Downloaded", "Easy", "Moderate", "Hard")
+
+    val filteredTreks = remember(treks, selectedFilter) {
+        when (selectedFilter) {
+            "Downloaded" -> treks.filter { MBTilesLoader.isDownloaded(context, it.id) }
+            "All"        -> treks
+            else         -> treks.filter {
+                it.difficulty.equals(selectedFilter, ignoreCase = true)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        "Trek Maps",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Column {
+                        Text(
+                            "Explore Treks",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = TrekTheme.TextPrimary
+                        )
+                        Text(
+                            "Nepal's finest trails",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TrekTheme.TextSecondary
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = TrekTheme.Background
                 )
             )
-        }
+        },
+        containerColor = TrekTheme.Background
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(bottom = 16.dp)
         ) {
-            items(sampleTreks) { trek ->
-                TrekCard(
-                    trek = trek,
-                    onClick = {
-                        navController.navigate("trek_detail/${trek.id}")
+            // Filter chips
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 12.dp)
+                ) {
+                    items(filters) { filter ->
+                        val selected = selectedFilter == filter
+                        Surface(
+                            shape = RoundedCornerShape(100.dp),
+                            color = if (selected) TrekTheme.PrimaryGreen
+                            else TrekTheme.Surface,
+                            border = if (!selected) ButtonDefaults.outlinedButtonBorder
+                            else null,
+                            modifier = Modifier.clickable { selectedFilter = filter }
+                        ) {
+                            Text(
+                                text = filter,
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp,
+                                    vertical = 8.dp
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) Color.White
+                                else TrekTheme.TextPrimary,
+                                fontWeight = if (selected) FontWeight.SemiBold
+                                else FontWeight.Normal
+                            )
+                        }
                     }
+                }
+            }
+
+            // Trek cards
+            items(filteredTreks) { trek ->
+                val isDownloaded = MBTilesLoader.isDownloaded(context, trek.id)
+                TrekCard(
+                    trek = trek.copy(isDownloaded = isDownloaded),
+                    onClick = { navController.navigate("trek_detail/${trek.id}") },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
             }
         }
@@ -84,124 +134,175 @@ fun TrekListScreen(navController: NavController) {
 @Composable
 fun TrekCard(
     trek: TrekItem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(4.dp)
+        colors = CardDefaults.cardColors(containerColor = TrekTheme.SurfaceElevated),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = CardDefaults.outlinedCardBorder()
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Trek name + difficulty badge
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        Column {
+            // Hero image placeholder with gradient
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp)
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                TrekTheme.PrimaryGreen,
+                                TrekTheme.AccentGreen
+                            )
+                        )
+                    )
             ) {
-                Text(
-                    text = trek.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                DifficultyBadge(difficulty = trek.difficulty)
-            }
+                // Trek name overlay
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = trek.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = trek.region,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.8f)
+                    )
+                }
 
-            // Region
-            Text(
-                text = trek.region,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                // Difficulty badge
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp),
+                    shape = RoundedCornerShape(100.dp),
+                    color = getDifficultyColor(trek.difficulty).copy(alpha = 0.9f)
+                ) {
+                    Text(
+                        text = trek.difficulty,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
 
             // Stats row
             Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                StatChip("${trek.durationDays} days")
-                StatChip("${trek.distanceKm} km")
-                StatChip("${trek.maxElevation}m")
+                TrekStat(
+                    icon = Icons.Filled.Route,
+                    value = "${trek.distanceKm}km"
+                )
+                TrekStat(
+                    icon = Icons.Filled.Schedule,
+                    value = "${trek.durationDays}d"
+                )
+                TrekStat(
+                    icon = Icons.Filled.Landscape,
+                    value = "${trek.maxElevation}m"
+                )
+
+                // Download status
+                if (trek.isDownloaded) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.OfflinePin,
+                            contentDescription = null,
+                            tint = TrekTheme.SuccessGreen,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            "Saved",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TrekTheme.SuccessGreen,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Download,
+                            contentDescription = null,
+                            tint = TrekTheme.TextSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            "${trek.fileSizeMb}MB",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TrekTheme.TextSecondary
+                        )
+                    }
+                }
             }
 
             // Description
             Text(
                 text = trek.description,
+                modifier = Modifier.padding(
+                    start = 16.dp,
+                    end = 16.dp,
+                    bottom = 16.dp
+                ),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TrekTheme.TextSecondary,
                 maxLines = 2
             )
-
-            // Download status
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                if (trek.isDownloaded) {
-                    Icon(
-                        Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        tint = Color(0xFF2E7D32),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        "Downloaded",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF2E7D32)
-                    )
-                } else {
-                    Icon(
-                        Icons.Filled.Download,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        "Tap to view & download",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
         }
     }
 }
 
 @Composable
-fun DifficultyBadge(difficulty: String) {
-    val color = when (difficulty.lowercase()) {
-        "easy" -> Color(0xFF2E7D32)
-        "moderate" -> Color(0xFFE65100)
-        "hard" -> Color(0xFFC62828)
-        else -> Color.Gray
-    }
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = color.copy(alpha = 0.15f)
+private fun TrekStat(
+    icon: ImageVector,
+    value: String
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = TrekTheme.TextSecondary,
+            modifier = Modifier.size(14.dp)
+        )
         Text(
-            text = difficulty,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            fontWeight = FontWeight.SemiBold
+            text = value,
+            style = MaterialTheme.typography.labelMedium,
+            color = TrekTheme.TextPrimary,
+            fontWeight = FontWeight.Medium
         )
     }
 }
 
-@Composable
-fun StatChip(label: String) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall
-        )
+fun getDifficultyColor(difficulty: String): Color {
+    return when (difficulty.lowercase()) {
+        "easy"     -> TrekTheme.DifficultyEasy
+        "moderate" -> TrekTheme.DifficultyModerate
+        "hard"     -> TrekTheme.DifficultyHard
+        else       -> Color.Gray
     }
 }

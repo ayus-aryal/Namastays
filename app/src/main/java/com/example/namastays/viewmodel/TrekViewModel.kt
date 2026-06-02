@@ -9,8 +9,6 @@ import com.example.namastays.NamastaysApp
 import com.example.namastays.data.SafetyDatabase
 import com.example.namastays.data.SleepAltitudeRecord
 import com.example.namastays.data.SleepAltitudeRepository
-import com.example.namastays.dto.TrekState
-import com.example.namastays.utilities.TrekEngine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
