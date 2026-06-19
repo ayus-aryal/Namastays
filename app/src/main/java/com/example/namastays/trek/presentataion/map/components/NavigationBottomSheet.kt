@@ -142,12 +142,17 @@ fun NavigationBottomSheet(
                         }
 
                         // Secondary stats
+                        // Secondary stats
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             NavMiniStat("Remaining", formatDist(state.distanceRemaining))
                             NavMiniStat("ETA", state.eta.ifEmpty { "--" })
+                            NavMiniStat(
+                                "Elevation",
+                                if (state.currentElevation > 0) "${state.currentElevation}m" else "--"
+                            )
                             NavMiniStat(
                                 "GPS",
                                 state.currentLocation.quality().name
@@ -158,6 +163,39 @@ fun NavigationBottomSheet(
                                     com.example.namastays.trek.util.LocationQuality.GOOD -> Color(0xFF4CAF50)
                                     com.example.namastays.trek.util.LocationQuality.POOR -> Color(0xFFFF9800)
                                     else -> Color(0xFFF44336)
+                                }
+                            )
+                        }
+
+                        // Speed + zoom indicator
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Current speed
+                            val speedKmh = (state.currentLocation.speed * 3.6f)
+                            NavMiniStat(
+                                label = "Speed",
+                                value = if (speedKmh < 0.5f) "Stopped"
+                                else "${"%.1f".format(speedKmh)} km/h"
+                            )
+
+                            // Zoom level indicator
+                            NavMiniStat(
+                                label = "Pace",
+                                value = when {
+                                    state.currentLocation.speed < 0.3f -> "Stopped"
+                                    state.currentLocation.speed < 1.0f -> "Slow"
+                                    state.currentLocation.speed < 2.0f -> "Walking"
+                                    state.currentLocation.speed < 3.5f -> "Fast walk"
+                                    else                               -> "Running"
+                                },
+                                color = when {
+                                    state.currentLocation.speed < 0.3f -> Color(0xFF9E9E9E)
+                                    state.currentLocation.speed < 1.0f -> Color(0xFF4CAF50)
+                                    state.currentLocation.speed < 2.0f -> Color(0xFF4285F4)
+                                    else                               -> Color(0xFFFF9800)
                                 }
                             )
                         }

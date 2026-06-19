@@ -1,18 +1,16 @@
 package com.example.namastays.trek.util
 
-/**
- * Simple 2D Kalman filter for GPS smoothing
- * Predicts position between fixes and corrects when new fix arrives
- * Makes movement feel continuous like Google Maps
- */
 class KalmanFilter {
     private var lat = 0.0
     private var lng = 0.0
-    private var variance = -1f  // negative = uninitialised
+    private var variance = -1f
+    private var lastTimestampMs = 0L
 
     companion object {
-        // How much we trust GPS accuracy (lower = trust GPS more)
         private const val MIN_ACCURACY = 1f
+        // Meters-squared per second — how much uncertainty grows while moving.
+        // 3.0 works well for walking pace; increase for faster movement.
+        private const val PROCESS_NOISE = 3f
     }
 
     fun process(
@@ -24,21 +22,21 @@ class KalmanFilter {
         val accuracyClamped = accuracy.coerceAtLeast(MIN_ACCURACY)
 
         if (variance < 0) {
-            // First fix — initialise
             lat = newLat
             lng = newLng
             variance = accuracyClamped * accuracyClamped
+            lastTimestampMs = timestampMs
             return Pair(lat, lng)
         }
 
-        // Kalman gain
-        val gain = variance / (variance + accuracyClamped * accuracyClamped)
+        // Grow variance with time so the filter stays responsive
+        val elapsedSec = ((timestampMs - lastTimestampMs) / 1000f).coerceIn(0f, 10f)
+        variance += elapsedSec * PROCESS_NOISE
+        lastTimestampMs = timestampMs
 
-        // Update position
+        val gain = variance / (variance + accuracyClamped * accuracyClamped)
         lat += gain * (newLat - lat)
         lng += gain * (newLng - lng)
-
-        // Update variance
         variance = (1 - gain) * variance
 
         return Pair(lat, lng)
@@ -46,5 +44,6 @@ class KalmanFilter {
 
     fun reset() {
         variance = -1f
+        lastTimestampMs = 0L
     }
 }

@@ -75,6 +75,11 @@
             android:foregroundServiceType="connectedDevice"
             android:exported="false" />
 
+        <service
+            android:name=".data.SosForegroundService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
+
         <receiver android:name=".data.SosBroadcastReceiver"
             android:exported="false" />
 

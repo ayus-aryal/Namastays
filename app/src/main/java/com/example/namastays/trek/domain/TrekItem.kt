@@ -15,5 +15,9 @@ data class TrekItem(
     val tilesUrl: String? = null,
     val gpxUrl: String? = null,
     val waypointsUrl: String? = null,
-    val waypointsCount: Int? = null
+    val waypointsCount: Int? = null,
+
+
+    val thumbnailUrl: String? = null,
+    val imagesUrl: List<String> = emptyList()
 )

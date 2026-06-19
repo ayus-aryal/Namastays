@@ -7,5 +7,7 @@ data class PlaceResponse(
     val name: String,
     val slug: String,
     val image: String?,
-    val categories: List<String>
+    val categories: List<String>,
+    val description: String?,
+    val recommender: RecommenderResponse? = null
 )

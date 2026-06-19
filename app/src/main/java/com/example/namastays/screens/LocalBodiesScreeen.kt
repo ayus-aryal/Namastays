@@ -33,26 +33,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Palette — white theme
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Palette ──────────────────────────────────────────────────────────────────
+private val SosPageBg        = Color(0xFFF7F8FA)
+private val SosCardBg        = Color(0xFFFFFFFF)
+private val SosCardBorder    = Color(0xFFE5E7EB)
+private val SosTextPrimary   = Color(0xFF111827)
+private val SosTextSecondary = Color(0xFF6B7280)
+private val SosTextHint      = Color(0xFF9CA3AF)
+private val SosGreenCall     = Color(0xFF22C55E)
+private val SosCopyBg        = Color(0xFFEEF2FF)
+private val SosCopyIcon      = Color(0xFF6366F1)
+private val SosBadgeGreen    = Color(0xFF16A34A)
 
-private val PageBg        = Color(0xFFF7F8FA)
-private val CardBg        = Color(0xFFFFFFFF)
-private val CardBorder    = Color(0xFFE5E7EB)
-private val TextPrimary   = Color(0xFF111827)
-private val TextSecondary = Color(0xFF6B7280)
-private val TextHint      = Color(0xFF9CA3AF)
-private val GreenCall     = Color(0xFF22C55E)
-private val CopyBg        = Color(0xFFEEF2FF)
-private val CopyIcon      = Color(0xFF6366F1)
-private val SectionBg     = Color(0xFFFFFFFF)
-private val BadgeGreen    = Color(0xFF16A34A)
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Data
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Data ─────────────────────────────────────────────────────────────────────
 data class EmergencyNumber(
     val label: String,
     val number: String,
@@ -74,47 +67,44 @@ data class EmbassyContact(
 )
 
 private val emergencyNumbers = listOf(
-    EmergencyNumber("Nepal Police",    "100",  Icons.Outlined.LocalPolice,          Color(0xFF3B82F6)),
-    EmergencyNumber("Ambulance",       "102",  Icons.Outlined.LocalHospital,        Color(0xFFEF4444)),
-    EmergencyNumber("Tourist Police",  "1144", Icons.Outlined.SupervisorAccount,    Color(0xFF10B981)),
-    EmergencyNumber("Fire Department", "101",  Icons.Outlined.LocalFireDepartment,  Color(0xFFF97316)),
+    EmergencyNumber("Nepal Police",    "100",  Icons.Outlined.LocalPolice,         Color(0xFF3B82F6)),
+    EmergencyNumber("Ambulance",       "102",  Icons.Outlined.LocalHospital,       Color(0xFFEF4444)),
+    EmergencyNumber("Tourist Police",  "1144", Icons.Outlined.SupervisorAccount,   Color(0xFF10B981)),
+    EmergencyNumber("Fire Department", "101",  Icons.Outlined.LocalFireDepartment, Color(0xFFF97316)),
 )
 
 private val airlineContacts = listOf(
-    AirlineContact("Simrik Air",   "+977-1-4155341", "All Nepal"),
-    AirlineContact("Fishtail Air", "+977-1-4111815", "All Nepal"),
-    AirlineContact("Altitude Air", "+977-1-4116665", "Everest, Annapurna"),
-    AirlineContact("Manang Air",   "+977-1-4115986", "Annapurna, Manang"),
-    AirlineContact("Sita Air",     "+977-1-4494160", "All Nepal"),
-    AirlineContact("Tara Air",     "+977-1-5542494", "Mountain routes"),
-    AirlineContact("Summit Air",   "+977-1-4465266", "Khumbu region"),
-    AirlineContact("Shree Airlines","+977-1-4494560","Mustang, Dolpa"),
-    AirlineContact("Air Dynasty",  "+977-1-4004892", "Kathmandu Valley"),
-    AirlineContact("Karnali Excursions","+977-84-420058","Karnali region"),
+    AirlineContact("Simrik Air",          "+977-1-4155341",  "All Nepal"),
+    AirlineContact("Fishtail Air",        "+977-1-4111815",  "All Nepal"),
+    AirlineContact("Altitude Air",        "+977-1-4116665",  "Everest, Annapurna"),
+    AirlineContact("Manang Air",          "+977-1-4115986",  "Annapurna, Manang"),
+    AirlineContact("Sita Air",            "+977-1-4494160",  "All Nepal"),
+    AirlineContact("Tara Air",            "+977-1-5542494",  "Mountain routes"),
+    AirlineContact("Summit Air",          "+977-1-4465266",  "Khumbu region"),
+    AirlineContact("Shree Airlines",      "+977-1-4494560",  "Mustang, Dolpa"),
+    AirlineContact("Air Dynasty",         "+977-1-4004892",  "Kathmandu Valley"),
+    AirlineContact("Karnali Excursions",  "+977-84-420058",  "Karnali region"),
 )
 
 private val embassyContacts = listOf(
-    EmbassyContact("US Embassy Kathmandu",        "+977-1-4234000", "Mon–Fri 8:00–17:00, Emergency line 24/7"),
-    EmbassyContact("UK Embassy Kathmandu",        "+977-1-4237100", "Mon–Fri 8:30–17:00"),
-    EmbassyContact("Indian Embassy Kathmandu",    "+977-1-4410900", "Mon–Fri 9:00–17:30"),
-    EmbassyContact("Chinese Embassy Kathmandu",   "+977-1-4434792", "Mon–Fri 9:00–12:00, 15:00–17:00"),
-    EmbassyContact("Australian Embassy Kathmandu","+977-1-4371678", "Mon–Fri 8:30–17:00"),
-    EmbassyContact("German Embassy Kathmandu",    "+977-1-4412786", "Mon–Fri 9:00–12:00"),
-    EmbassyContact("French Embassy Kathmandu",    "+977-1-4412332", "Mon–Fri 9:00–12:30, 13:30–17:00"),
+    EmbassyContact("US Embassy Kathmandu",         "+977-1-4234000", "Mon–Fri 8:00–17:00, Emergency line 24/7"),
+    EmbassyContact("UK Embassy Kathmandu",         "+977-1-4237100", "Mon–Fri 8:30–17:00"),
+    EmbassyContact("Indian Embassy Kathmandu",     "+977-1-4410900", "Mon–Fri 9:00–17:30"),
+    EmbassyContact("Chinese Embassy Kathmandu",    "+977-1-4434792", "Mon–Fri 9:00–12:00, 15:00–17:00"),
+    EmbassyContact("Australian Embassy Kathmandu", "+977-1-4371678", "Mon–Fri 8:30–17:00"),
+    EmbassyContact("German Embassy Kathmandu",     "+977-1-4412786", "Mon–Fri 9:00–12:00"),
+    EmbassyContact("French Embassy Kathmandu",     "+977-1-4412332", "Mon–Fri 9:00–12:30, 13:30–17:00"),
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Screen
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Screen ───────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmergencySOSScreen(navController: NavController) {
     val context = LocalContext.current
-    var airlinesExpanded  by remember { mutableStateOf(true) }
-    var embassyExpanded   by remember { mutableStateOf(false) }
-    var instructExpanded  by remember { mutableStateOf(false) }
-    var showAllAirlines   by remember { mutableStateOf(false) }
+    var airlinesExpanded by remember { mutableStateOf(true) }
+    var embassyExpanded  by remember { mutableStateOf(false) }
+    var instructExpanded by remember { mutableStateOf(false) }
+    var showAllAirlines  by remember { mutableStateOf(false) }
 
     val visibleAirlines = if (showAllAirlines) airlineContacts else airlineContacts.take(4)
 
@@ -123,33 +113,35 @@ fun EmergencySOSScreen(navController: NavController) {
             TopAppBar(
                 title = {
                     Text(
-                        "Emergency SOS",
+                        "Local Bodies",
                         fontFamily = PlusJakartaSans,
                         fontWeight = FontWeight.Bold,
                         fontSize   = 18.sp,
-                        color      = TextPrimary,
+                        color      = SosTextPrimary,
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = SosTextPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = CardBg),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SosCardBg),
+                windowInsets = WindowInsets(0, 0, 0, 0),
             )
         },
-        containerColor = PageBg,
+        containerColor = SosPageBg,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
 
         LazyColumn(
-            modifier        = Modifier
+            modifier       = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding  = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
 
-            // ── Hero banner ──────────────────────────────────────────────────
+            // ── Hero banner ────────────────────────────────────────────────────
             item {
                 Row(
                     modifier = Modifier
@@ -157,7 +149,7 @@ fun EmergencySOSScreen(navController: NavController) {
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFFE53935))
                         .padding(horizontal = 20.dp, vertical = 18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     Box(
@@ -192,14 +184,14 @@ fun EmergencySOSScreen(navController: NavController) {
                 }
             }
 
-            // ── Emergency numbers as rows ─────────────────────────────────────
+            // ── Section: Emergency numbers ─────────────────────────────────────
             item {
                 Text(
-                    "EMERGENCY NUMBERS (NEPAL)",
+                    "EMERGENCY NUMBERS — NEPAL",
                     fontFamily    = PlusJakartaSans,
                     fontWeight    = FontWeight.Bold,
                     fontSize      = 11.sp,
-                    color         = TextSecondary,
+                    color         = SosTextSecondary,
                     letterSpacing = 1.sp,
                 )
             }
@@ -208,44 +200,44 @@ fun EmergencySOSScreen(navController: NavController) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
-                        .background(CardBg)
-                        .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                        .background(SosCardBg)
+                        .border(1.dp, SosCardBorder, RoundedCornerShape(16.dp))
                         .padding(horizontal = 16.dp),
                 ) {
                     emergencyNumbers.forEachIndexed { index, item ->
-                        if (index > 0) HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
+                        if (index > 0) HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
                         EmergencyNumberRow(item = item, context = context)
                     }
                 }
             }
 
-            // ── Helicopter Rescue ────────────────────────────────────────────
+            // ── Section: Helicopter rescue ─────────────────────────────────────
             item {
-                ExpandableSection(
-                    icon      = Icons.Outlined.Flight,
-                    iconTint  = Color(0xFFF59E0B),
-                    title     = "Helicopter Rescue",
-                    count     = airlineContacts.size,
-                    expanded  = airlinesExpanded,
-                    onToggle  = { airlinesExpanded = !airlinesExpanded },
+                SosExpandableSection(
+                    icon     = Icons.Outlined.Flight,
+                    iconTint = Color(0xFFF59E0B),
+                    title    = "Helicopter Rescue",
+                    count    = airlineContacts.size,
+                    expanded = airlinesExpanded,
+                    onToggle = { airlinesExpanded = !airlinesExpanded },
                 ) {
                     Column {
                         visibleAirlines.forEachIndexed { index, airline ->
-                            if (index > 0) HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
+                            if (index > 0) HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
                             AirlineRow(contact = airline, context = context)
                         }
                         if (!showAllAirlines && airlineContacts.size > 4) {
-                            HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
+                            HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { showAllAirlines = true }
-                                    .padding(vertical = 12.dp),
+                                    .padding(vertical = 14.dp),
                                 horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment     = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "Show ${airlineContacts.size - 4} more",
+                                    "Show ${airlineContacts.size - 4} more airlines",
                                     fontFamily = PlusJakartaSans,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize   = 13.sp,
@@ -264,84 +256,80 @@ fun EmergencySOSScreen(navController: NavController) {
                 }
             }
 
-            // ── Embassy Contacts ─────────────────────────────────────────────
+            // ── Section: Embassy contacts ──────────────────────────────────────
             item {
-                ExpandableSection(
-                    icon      = Icons.Outlined.Language,
-                    iconTint  = Color(0xFF3B82F6),
-                    title     = "Embassy Contacts",
-                    count     = embassyContacts.size,
-                    expanded  = embassyExpanded,
-                    onToggle  = { embassyExpanded = !embassyExpanded },
-                    subtitle  = "Passport issues, legal aid & consular emergencies",
+                SosExpandableSection(
+                    icon     = Icons.Outlined.Language,
+                    iconTint = Color(0xFF3B82F6),
+                    title    = "Embassy Contacts",
+                    count    = embassyContacts.size,
+                    expanded = embassyExpanded,
+                    onToggle = { embassyExpanded = !embassyExpanded },
+                    subtitle = "Passport issues, legal aid & consular emergencies",
                 ) {
                     Column {
                         embassyContacts.forEachIndexed { index, embassy ->
-                            if (index > 0) HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
+                            if (index > 0) HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
                             EmbassyRow(contact = embassy, context = context)
                         }
                     }
                 }
             }
 
-            // ── Emergency Instructions ───────────────────────────────────────
+            // ── Section: Emergency instructions ───────────────────────────────
             item {
-                ExpandableSection(
-                    icon      = Icons.Outlined.MenuBook,
-                    iconTint  = Color(0xFF6366F1),
-                    title     = "Emergency Instructions",
-                    expanded  = instructExpanded,
-                    onToggle  = { instructExpanded = !instructExpanded },
+                SosExpandableSection(
+                    icon     = Icons.Outlined.MenuBook,
+                    iconTint = Color(0xFF6366F1),
+                    title    = "What To Do In An Emergency",
+                    expanded = instructExpanded,
+                    onToggle = { instructExpanded = !instructExpanded },
                 ) {
                     Column(
                         modifier            = Modifier.padding(horizontal = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        InstructionItem(
+                        SosInstructionItem(
                             number = "1",
                             title  = "Stay calm and assess the situation",
                             body   = "Do not panic. Assess injuries and immediate dangers before acting.",
                         )
-                        InstructionItem(
+                        SosInstructionItem(
                             number = "2",
                             title  = "Call for help",
                             body   = "Use the emergency numbers above. Clearly state your location, name, and the nature of the emergency.",
                         )
-                        InstructionItem(
+                        SosInstructionItem(
                             number = "3",
                             title  = "If at altitude — stop ascending",
                             body   = "Any worsening of symptoms requires immediate descent. Do not wait for morning.",
                         )
-                        InstructionItem(
+                        SosInstructionItem(
                             number = "4",
                             title  = "Request helicopter evacuation if needed",
-                            body   = "Call a helicopter rescue service directly. Have your GPS coordinates or landmark ready.",
+                            body   = "Call a helicopter rescue service directly. Have your GPS coordinates or a nearby landmark ready.",
                         )
                     }
                 }
             }
 
-            item { Spacer(Modifier.height(8.dp)) }
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Emergency number row (same style as airline / embassy rows)
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Emergency number row ──────────────────────────────────────────────────────
 @Composable
 private fun EmergencyNumberRow(item: EmergencyNumber, context: Context) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
             modifier         = Modifier
-                .size(38.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .background(item.iconTint.copy(alpha = 0.1f)),
             contentAlignment = Alignment.Center,
@@ -353,32 +341,32 @@ private fun EmergencyNumberRow(item: EmergencyNumber, context: Context) {
                 modifier           = Modifier.size(20.dp),
             )
         }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
                 text       = item.label,
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 14.sp,
-                color      = TextPrimary,
+                color      = SosTextPrimary,
             )
             Text(
                 text       = item.number,
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize   = 18.sp,
+                fontSize   = 20.sp,
                 color      = item.iconTint,
             )
         }
-        CallCopyButtons(phone = item.number, context = context)
+        SosCallCopyButtons(phone = item.number, context = context)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Expandable section wrapper
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Expandable section ────────────────────────────────────────────────────────
 @Composable
-private fun ExpandableSection(
+private fun SosExpandableSection(
     icon: ImageVector,
     iconTint: Color,
     title: String,
@@ -392,25 +380,32 @@ private fun ExpandableSection(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(SectionBg)
-            .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
+            .background(SosCardBg)
+            .border(1.dp, SosCardBorder, RoundedCornerShape(16.dp)),
     ) {
-        // Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(iconTint.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+            }
             Text(
                 text       = title,
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 15.sp,
-                color      = TextPrimary,
+                color      = SosTextPrimary,
                 modifier   = Modifier.weight(1f),
             )
             if (count != null) {
@@ -426,15 +421,15 @@ private fun ExpandableSection(
                         fontFamily = PlusJakartaSans,
                         fontWeight = FontWeight.Bold,
                         fontSize   = 12.sp,
-                        color      = CopyIcon,
+                        color      = SosCopyIcon,
                     )
                 }
             }
             Icon(
-                imageVector = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                contentDescription = null,
-                tint = TextHint,
-                modifier = Modifier.size(20.dp),
+                imageVector        = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint               = SosTextHint,
+                modifier           = Modifier.size(20.dp),
             )
         }
 
@@ -444,18 +439,23 @@ private fun ExpandableSection(
             exit    = shrinkVertically(),
         ) {
             Column {
-                HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
+                HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
                 if (subtitle != null) {
                     Text(
-                        text       = subtitle,
+                        text      = subtitle,
                         fontFamily = PlusJakartaSans,
-                        fontSize   = 12.sp,
-                        color      = TextHint,
-                        fontStyle  = androidx.compose.ui.text.font.FontStyle.Italic,
-                        modifier   = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        fontSize  = 12.sp,
+                        color     = SosTextHint,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        modifier  = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = if (subtitle != null) 0.dp else 4.dp)) {
+                Box(
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp,
+                        vertical   = if (subtitle != null) 0.dp else 4.dp
+                    )
+                ) {
                     content()
                 }
                 Spacer(Modifier.height(8.dp))
@@ -464,20 +464,20 @@ private fun ExpandableSection(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Airline row
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Airline row ───────────────────────────────────────────────────────────────
 @Composable
 private fun AirlineRow(contact: AirlineContact, context: Context) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
             Row(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -487,13 +487,13 @@ private fun AirlineRow(contact: AirlineContact, context: Context) {
                     fontFamily = PlusJakartaSans,
                     fontWeight = FontWeight.Bold,
                     fontSize   = 14.sp,
-                    color      = TextPrimary,
+                    color      = SosTextPrimary,
                 )
                 if (contact.available247) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(BadgeGreen)
+                            .background(SosBadgeGreen)
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
                         Text(
@@ -510,7 +510,7 @@ private fun AirlineRow(contact: AirlineContact, context: Context) {
                 text       = contact.phone,
                 fontFamily = PlusJakartaSans,
                 fontSize   = 13.sp,
-                color      = TextSecondary,
+                color      = SosTextSecondary,
             )
             Row(
                 verticalAlignment     = Alignment.CenterVertically,
@@ -530,118 +530,96 @@ private fun AirlineRow(contact: AirlineContact, context: Context) {
                 )
             }
         }
-        CallCopyButtons(phone = contact.phone, context = context)
+        SosCallCopyButtons(phone = contact.phone, context = context)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Embassy row
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Embassy row ───────────────────────────────────────────────────────────────
 @Composable
 private fun EmbassyRow(contact: EmbassyContact, context: Context) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
             Text(
                 text       = contact.name,
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 14.sp,
-                color      = TextPrimary,
+                color      = SosTextPrimary,
             )
             Text(
                 text       = contact.phone,
                 fontFamily = PlusJakartaSans,
                 fontSize   = 13.sp,
-                color      = TextSecondary,
+                color      = SosTextSecondary,
             )
             Row(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(
-                    Icons.Outlined.AccessTime,
-                    contentDescription = null,
-                    tint     = TextHint,
-                    modifier = Modifier.size(11.dp),
-                )
+                Icon(Icons.Outlined.AccessTime, contentDescription = null, tint = SosTextHint, modifier = Modifier.size(11.dp))
                 Text(
                     text       = contact.hours,
                     fontFamily = PlusJakartaSans,
                     fontSize   = 11.sp,
-                    color      = TextHint,
+                    color      = SosTextHint,
                     maxLines   = 1,
                     overflow   = TextOverflow.Ellipsis,
                 )
             }
         }
-        CallCopyButtons(phone = contact.phone, context = context)
+        SosCallCopyButtons(phone = contact.phone, context = context)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Call + Copy button pair
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Call + Copy buttons ───────────────────────────────────────────────────────
 @Composable
-private fun CallCopyButtons(phone: String, context: Context) {
+private fun SosCallCopyButtons(phone: String, context: Context) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Call
         Box(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(GreenCall)
+                .background(SosGreenCall)
                 .clickable { dialNumber(context, phone) },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                Icons.Outlined.Call,
-                contentDescription = "Call $phone",
-                tint     = Color.White,
-                modifier = Modifier.size(18.dp),
-            )
+            Icon(Icons.Outlined.Call, contentDescription = "Call $phone", tint = Color.White, modifier = Modifier.size(18.dp))
         }
-        // Copy
         Box(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(CopyBg)
+                .background(SosCopyBg)
                 .clickable { copyToClipboard(context, phone) },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                Icons.Outlined.ContentCopy,
-                contentDescription = "Copy $phone",
-                tint     = CopyIcon,
-                modifier = Modifier.size(18.dp),
-            )
+            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy $phone", tint = SosCopyIcon, modifier = Modifier.size(18.dp))
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Instruction item
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Instruction item ──────────────────────────────────────────────────────────
 @Composable
-private fun InstructionItem(number: String, title: String, body: String) {
+private fun SosInstructionItem(number: String, title: String, body: String) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment     = Alignment.Top,
     ) {
         Box(
             modifier         = Modifier
-                .size(26.dp)
+                .size(28.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFEEF2FF)),
+                .background(Color(0xFFEEF2FF))
+                .border(1.dp, Color(0xFFC7D2FE), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -649,32 +627,29 @@ private fun InstructionItem(number: String, title: String, body: String) {
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 12.sp,
-                color      = CopyIcon,
+                color      = SosCopyIcon,
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 text       = title,
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 13.sp,
-                color      = TextPrimary,
+                color      = SosTextPrimary,
             )
             Text(
                 text       = body,
                 fontFamily = PlusJakartaSans,
                 fontSize   = 12.sp,
-                color      = TextSecondary,
+                color      = SosTextSecondary,
                 lineHeight = 17.sp,
             )
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Phone number", text))

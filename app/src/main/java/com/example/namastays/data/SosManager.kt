@@ -21,6 +21,12 @@ object SosManager {
         android.util.Log.d("SOS_BLE", "SOS cancelled, BLE advertising stopped")
     }
 
+    private var pendingContacts: List<EmergencyContactEntity> = emptyList()
+
+    fun setPendingContacts(contacts: List<EmergencyContactEntity>) {
+        pendingContacts = contacts
+    }
+
     @SuppressLint("MissingPermission")
     fun sendSosMessages(
         context: Context,
@@ -28,6 +34,9 @@ object SosManager {
         onResult: (success: Boolean, message: String) -> Unit
     ) {
         isSosActive = true
+
+        val effectiveContacts = contacts.ifEmpty { pendingContacts }
+
 
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
 
@@ -38,7 +47,7 @@ object SosManager {
                 else "Location unavailable"
 
                 // ── SMS ───────────────────────────────────────────────────────
-                sendSmsToAll(context, contacts, locationText, onResult)
+                sendSmsToAll(context, effectiveContacts, locationText, onResult)
 
                 // ── BLE broadcast ─────────────────────────────────────────────
                 if (BlePermissionHelper.canAdvertise(context)) {
@@ -52,7 +61,7 @@ object SosManager {
                 }
             }
             .addOnFailureListener {
-                sendSmsToAll(context, contacts, "Location unavailable", onResult)
+                sendSmsToAll(context, effectiveContacts, "Location unavailable", onResult)
                 if (BlePermissionHelper.canAdvertise(context)) {
                     BleManager.startAdvertising(context, 0.0, 0.0) { _, _ -> }
                 }

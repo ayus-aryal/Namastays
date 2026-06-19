@@ -1,7 +1,9 @@
 package com.example.namastays.dto
 
+import java.util.UUID
+
 data class PlaceDetailResponse(
-    val id: String,
+    val id: UUID?,
     val name: String,
     val description: String?,
     val lat: Double,

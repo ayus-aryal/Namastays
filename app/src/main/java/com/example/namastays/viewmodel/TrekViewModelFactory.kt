@@ -11,12 +11,10 @@ class TrekViewModelFactory(
     override fun <T : ViewModel> create(
         modelClass: Class<T>
     ): T {
-
         if (modelClass.isAssignableFrom(TrekViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
             return TrekViewModel(application) as T
         }
-
-        throw IllegalArgumentException("Unknown ViewModel")
+        throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")
     }
 }

@@ -1,5 +1,6 @@
 package com.example.namastays.api
 
+import com.example.namastays.dto.CityPlacesResponse
 import com.example.namastays.dto.PlaceDetailResponse
 import com.example.namastays.dto.PlaceResponse
 import retrofit2.http.GET
@@ -19,4 +20,10 @@ interface PlaceApiService {
         @Path("citySlug") citySlug: String,
         @Path("placeSlug") placeSlug: String
     ): PlaceDetailResponse
+
+    @GET("cities/{citySlug}/places")
+    suspend fun getCityWithPlaces(
+        @Path("citySlug") citySlug: String,
+        @Query("category") category: String? = null
+    ): CityPlacesResponse
 }
