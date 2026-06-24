@@ -29,6 +29,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.namastays.NamastaysApp
 import com.example.namastays.dto.PropertySearchResponse
 import com.example.namastays.viewmodel.SearchResultsUiState
 import com.example.namastays.viewmodel.SearchResultsViewModel
@@ -214,8 +216,10 @@ private fun ErrorStateView(message: String, onRetry: () -> Unit) {
 fun SearchResultsScreen(
     city: String,
     navController: NavController,
-    viewModel: SearchResultsViewModel = viewModel()
-) {
+    viewModel: SearchResultsViewModel = run {
+        val app = LocalContext.current.applicationContext as NamastaysApp
+        viewModel(factory = SearchResultsViewModel.Factory(app.deps.propertyRepository))
+    }) {
     var currentCity by remember { mutableStateOf(city) }
     LaunchedEffect(currentCity) { viewModel.fetchProperties(currentCity) }
 

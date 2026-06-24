@@ -149,4 +149,16 @@ dependencies {
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+
+    // Credential Manager — Google Sign-In
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+
+    // Encrypted local storage for auth tokens
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Splash screen API — for the auth-aware splash we'll wire in later
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
 }

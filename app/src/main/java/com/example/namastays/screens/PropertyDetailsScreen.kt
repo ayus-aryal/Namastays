@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -33,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.namastays.NamastaysApp
 import com.example.namastays.dto.RoomResponse
 import com.example.namastays.viewmodel.PropertyDetailsUiState
 import com.example.namastays.viewmodel.PropertyDetailsViewModel
@@ -146,8 +148,10 @@ private fun PropertyNotFound(onBack: () -> Unit) {
 fun PropertyDetailsScreen(
     propertyId: String,
     navController: NavController,
-    viewModel: PropertyDetailsViewModel = viewModel()
-) {
+    viewModel: PropertyDetailsViewModel = run {
+        val app = LocalContext.current.applicationContext as NamastaysApp
+        viewModel(factory = PropertyDetailsViewModel.Factory(app.deps.propertyRepository))
+    }) {
     LaunchedEffect(propertyId) { viewModel.fetchPropertyDetails(propertyId) }
 
     // ── Collect sealed UiState — replaces the broken remember{} delegation ────

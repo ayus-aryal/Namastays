@@ -1,10 +1,11 @@
 package com.example.namastays.viewmodel
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.namastays.dto.CityPlacesResponse
 import com.example.namastays.dto.PlaceResponse
+import com.example.namastays.repository.NetworkResult
 import com.example.namastays.repository.PlaceRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,7 +16,7 @@ import kotlinx.coroutines.launch
 // ── UI state ──────────────────────────────────────────────────────────────────
 
 sealed class PlaceUiState {
-    object Idle : PlaceUiState()
+    object Idle    : PlaceUiState()
     object Loading : PlaceUiState()
     data class Success(
         val city:             CityPlacesResponse,
@@ -27,37 +28,44 @@ sealed class PlaceUiState {
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-class PlaceViewModel : ViewModel() {
-
-    private val repository = PlaceRepository()
+/**
+ * FIX #15/#16/#22 — repository injected; NetworkResult handled explicitly.
+ */
+class PlaceViewModel(
+    private val repository: PlaceRepository
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow<PlaceUiState>(PlaceUiState.Idle)
     val uiState: StateFlow<PlaceUiState> = _uiState.asStateFlow()
 
-    // Cancels any in-flight load when the city/category changes, preventing
-    // stale responses from overwriting fresher state.
     private var loadJob: Job? = null
 
     fun loadCityWithPlaces(citySlug: String, category: String? = null) {
         loadJob?.cancel()
-
         loadJob = viewModelScope.launch {
             _uiState.value = PlaceUiState.Loading
-            _uiState.value = try {
-                val response = repository.getCityWithPlaces(citySlug, category)
-
-                PlaceUiState.Success(
-                    city             = response,
-                    places           = response.places,
+            _uiState.value = when (val result = repository.getCityWithPlaces(citySlug, category)) {
+                is NetworkResult.Success -> PlaceUiState.Success(
+                    city             = result.data,
+                    places           = result.data.places,
                     selectedCategory = category
                 )
-            } catch (e: Exception) {
-                PlaceUiState.Error(e.message ?: "Something went wrong")
+                is NetworkResult.NoConnectivity -> PlaceUiState.Error("No internet connection.")
+                is NetworkResult.Timeout        -> PlaceUiState.Error("Request timed out.")
+                is NetworkResult.ServerError    -> PlaceUiState.Error(result.message)
             }
         }
     }
 
-    fun retry(citySlug: String, category: String? = null) {
+    fun retry(citySlug: String, category: String? = null) =
         loadCityWithPlaces(citySlug, category)
+
+    // ── Factory ───────────────────────────────────────────────────────────────
+
+    class Factory(private val repository: PlaceRepository) : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            @Suppress("UNCHECKED_CAST")
+            return PlaceViewModel(repository) as T
+        }
     }
 }

@@ -1,9 +1,11 @@
 package com.example.namastays.viewmodel
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.namastays.dto.CityResponse
 import com.example.namastays.repository.CityRepository
+import com.example.namastays.repository.NetworkResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,14 +21,21 @@ sealed class CityUiState {
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-class CityViewModel : ViewModel() {
+/**
+ * Changes vs original:
+ *
+ * FIX #12/#13 — [repository] is now injected; [fetchCities] handles
+ * [NetworkResult] instead of catching raw exceptions.
+ *
+ * FIX #22 — ViewModel no longer constructs CityRepository() itself.
+ *            A [Factory] is provided so the call site can supply the
+ *            repository (created by whatever DI mechanism is in use —
+ *            manual factory, Hilt, etc.).
+ */
+class CityViewModel(
+    private val repository: CityRepository
+) : ViewModel() {
 
-    private val cityRepository = CityRepository()
-
-    // StateFlow instead of mutableStateOf:
-    //   - Atomic writes: no partial-state recomposition between isLoading and cities
-    //   - Thread-safe: safe to update from any dispatcher
-    //   - Lifecycle-aware collection via collectAsStateWithLifecycle()
     private val _uiState = MutableStateFlow<CityUiState>(CityUiState.Loading)
     val uiState: StateFlow<CityUiState> = _uiState.asStateFlow()
 
@@ -37,15 +46,23 @@ class CityViewModel : ViewModel() {
     private fun fetchCities() {
         viewModelScope.launch {
             _uiState.value = CityUiState.Loading
-            _uiState.value = try {
-                CityUiState.Success(cityRepository.getCities())
-            } catch (e: Exception) {
-                CityUiState.Error(e.message ?: "Something went wrong")
+            _uiState.value = when (val result = repository.getCities()) {
+                is NetworkResult.Success      -> CityUiState.Success(result.data)
+                is NetworkResult.NoConnectivity -> CityUiState.Error("No internet connection.")
+                is NetworkResult.Timeout        -> CityUiState.Error("Request timed out.")
+                is NetworkResult.ServerError    -> CityUiState.Error(result.message)
             }
         }
     }
 
-    fun retry() {
-        fetchCities()
+    fun retry() = fetchCities()
+
+    // ── Factory ───────────────────────────────────────────────────────────────
+
+    class Factory(private val repository: CityRepository) : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            @Suppress("UNCHECKED_CAST")
+            return CityViewModel(repository) as T
+        }
     }
 }

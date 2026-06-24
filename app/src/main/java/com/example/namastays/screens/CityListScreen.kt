@@ -32,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.namastays.NamastaysApp
 import com.example.namastays.data.CityPreferences
 import com.example.namastays.dto.CityResponse
 import com.example.namastays.viewmodel.CityUiState
@@ -44,8 +45,10 @@ private val CardOverlay = listOf(Color.Transparent, Color(0x33000000), Color(0xD
 @Composable
 fun CityListScreen(
     navController: NavController,
-    viewModel: CityViewModel = viewModel()
-) {
+    viewModel: CityViewModel = run {
+        val app = LocalContext.current.applicationContext as NamastaysApp
+        viewModel(factory = CityViewModel.Factory(app.deps.cityRepository))
+    }) {
     val context         = LocalContext.current
     val cityPreferences = remember { CityPreferences(context) }
     val scope           = rememberCoroutineScope()

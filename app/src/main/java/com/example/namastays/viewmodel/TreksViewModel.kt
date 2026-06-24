@@ -21,7 +21,7 @@ sealed class TrekUiState {
     ) : TrekUiState()
     data class Error(
         val treks:         List<TrekItem>,
-        val networkResult: NetworkResult
+        val networkResult: NetworkResult<*>
     ) : TrekUiState()
 }
 
@@ -36,9 +36,6 @@ class TreksViewModel(
     private val _uiState = MutableStateFlow<TrekUiState>(TrekUiState.Loading)
     val uiState: StateFlow<TrekUiState> = _uiState.asStateFlow()
 
-    // Thread-safe: only ever written/read via StateFlow atomicity.
-    // Replaces the previous plain `var List` that had a latent data race
-    // between the Room collector and concurrent refresh() calls.
     private val _cachedTreks = MutableStateFlow<List<TrekItem>>(emptyList())
 
     init {
@@ -52,12 +49,7 @@ class TreksViewModel(
         viewModelScope.launch {
             repository.getAllTreks()
                 .flowOn(Dispatchers.IO)
-                // Suppress duplicate emissions (e.g. Room re-emitting the same
-                // list after an unrelated table write in the same DB).
                 .distinctUntilChanged()
-                // Debounce rapid back-to-back emissions (network refresh writes
-                // rows one-by-one on some Room versions, causing N emissions
-                // for an N-trek update). 300 ms is imperceptible to the user.
                 .debounce(300L)
                 .collect { treks ->
                     _cachedTreks.value = treks
@@ -68,16 +60,10 @@ class TreksViewModel(
                             TrekUiState.Success(treks)
                         current is TrekUiState.Success ->
                             current.copy(treks = treks)
-                        // Keep Error state's trek list up to date but don't
-                        // clear the error — that only happens via refresh().
                         current is TrekUiState.Error ->
                             current.copy(treks = treks)
                         else -> current
                     }
-
-                    // refreshDownloadedIds() is triggered here — not inside
-                    // refresh() — so file-system checks only run when the
-                    // trek list actually changes, not on every network call.
                     refreshDownloadedIds()
                 }
         }
@@ -87,25 +73,21 @@ class TreksViewModel(
 
     fun refresh() {
         viewModelScope.launch {
-            val cached = _cachedTreks.value
-
-            // Transition to appropriate loading state before the network call.
+            val cached  = _cachedTreks.value
             val current = _uiState.value
             _uiState.value = when (current) {
                 is TrekUiState.Error -> {
-                    if (cached.isNotEmpty())
-                        TrekUiState.Success(cached, isRefreshing = true)
-                    else
-                        TrekUiState.Loading
+                    if (cached.isNotEmpty()) TrekUiState.Success(cached, isRefreshing = true)
+                    else TrekUiState.Loading
                 }
                 is TrekUiState.Success -> current.copy(isRefreshing = true)
                 else -> TrekUiState.Loading
             }
 
+            // FIX — NetworkResult is now generic; use is NetworkResult.Success<*>
+            // (wildcard) because the type parameter is Unit and we don't need the value.
             when (val result = repository.refreshTreks()) {
-                is NetworkResult.Success -> {
-                    // Room Flow delivers the updated list reactively; just
-                    // clear the refreshing spinner here.
+                is NetworkResult.Success<*> -> {
                     val updated = _uiState.value
                     if (updated is TrekUiState.Success) {
                         _uiState.value = updated.copy(isRefreshing = false)
@@ -123,9 +105,6 @@ class TreksViewModel(
 
     // ── Downloaded IDs ────────────────────────────────────────────────────────
 
-    // Runs on IO. Each MBTilesLoader.isDownloaded() call is a disk stat()
-    // so we keep this off the main thread and only trigger it when the trek
-    // list actually changes (via the distinctUntilChanged + debounce above).
     private suspend fun refreshDownloadedIds() {
         withContext(Dispatchers.IO) {
             val ids = _cachedTreks.value

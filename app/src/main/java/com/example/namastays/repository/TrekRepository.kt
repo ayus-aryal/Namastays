@@ -1,6 +1,6 @@
 package com.example.namastays.repository
 
-import com.example.namastays.api.TrekRetrofitInstance
+import com.example.namastays.api.TrekApiService
 import com.example.namastays.dto.TrekApiModel
 import com.example.namastays.dto.TrekHighlightApiModel
 import com.example.namastays.dto.TrekItineraryDayApiModel
@@ -18,68 +18,59 @@ import com.example.namastays.trek.domain.TrekItem
 import com.example.namastays.trek.util.toCloudinaryThumbnail
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.util.concurrent.ConcurrentHashMap
 
-sealed class NetworkResult {
-    object Success        : NetworkResult()
-    object NoConnectivity : NetworkResult()
-    object Timeout        : NetworkResult()
-    data class ServerError(val message: String) : NetworkResult()
-}
+// NOTE: NetworkResult is declared in NetworkResult.kt in this same package.
+// Do NOT redeclare it here — that caused the "Redeclaration" build error.
 
 class TrekRepository(
-    private val cacheDao:     TrekCacheDao,
-    private val itineraryDao: TrekItineraryDao,
-    private val highlightDao: TrekHighlightDao,
+    private val api:           TrekApiService,
+    private val cacheDao:      TrekCacheDao,
+    private val itineraryDao:  TrekItineraryDao,
+    private val highlightDao:  TrekHighlightDao,
     private val downloadedDao: DownloadedTrekDao
 ) {
 
+    private val detailMutexes = ConcurrentHashMap<String, Mutex>()
+    private fun mutexFor(trekId: String) =
+        detailMutexes.getOrPut(trekId) { Mutex() }
+
     // ── List screen ───────────────────────────────────────────────────────────
 
-    // Room Flow — emits whenever trek_cache changes.
-    // TreksViewModel collects this; no change needed there.
-    fun getAllTreks(): Flow<List<TrekItem>> {
-        return cacheDao.getAllTreks().map { entities ->
-            entities.map { it.toTrekItem() }
-        }
-    }
+    fun getAllTreks(): Flow<List<TrekItem>> =
+        cacheDao.getAllTreks().map { entities -> entities.map { it.toTrekItem() } }
 
     // ── Detail screen ─────────────────────────────────────────────────────────
 
-    // Fetches TrekDetail from:
-    //   1. Room cache (trek_cache + trek_itinerary_days + trek_highlights)
-    //      — used when offline or after first network fetch
-    //   2. Network (GET /api/treks/{id}) if not cached in Room yet
-    //
-    // Returns null only if the trek ID doesn't exist in Room at all
-    // (should never happen in practice since the list screen populates the cache).
-    suspend fun getTrekDetail(trekId: String): TrekDetail? {
-        val entity     = cacheDao.getTrekById(trekId) ?: return null
-        val days       = itineraryDao.getDaysForTrek(trekId)
-        val highlights = highlightDao.getHighlightsForTrek(trekId)
+    suspend fun getTrekDetail(trekId: String): TrekDetailResult {
+        val entity = cacheDao.getTrekById(trekId)
+            ?: return TrekDetailResult.NotFound
 
-        // If days/highlights are empty it means we haven't fetched the detail
-        // for this trek yet — fetch it now and cache it before returning.
-        return if (days.isEmpty() && highlights.isEmpty()) {
-            fetchAndCacheDetail(trekId)
-            // Re-read from Room after caching so the caller always gets
-            // data from a single source of truth.
-            val freshDays       = itineraryDao.getDaysForTrek(trekId)
-            val freshHighlights = highlightDao.getHighlightsForTrek(trekId)
-            entity.toTrekDetail(freshDays, freshHighlights)
-        } else {
-            entity.toTrekDetail(days, highlights)
+        return mutexFor(trekId).withLock {
+            val days       = itineraryDao.getDaysForTrek(trekId)
+            val highlights = highlightDao.getHighlightsForTrek(trekId)
+
+            if (days.isEmpty() && highlights.isEmpty()) {
+                val result = fetchAndCacheDetail(trekId)
+                if (result !is NetworkResult.Success<*>) {
+                    return@withLock TrekDetailResult.NetworkError(result)
+                }
+                val freshDays       = itineraryDao.getDaysForTrek(trekId)
+                val freshHighlights = highlightDao.getHighlightsForTrek(trekId)
+                TrekDetailResult.Found(entity.toTrekDetail(freshDays, freshHighlights))
+            } else {
+                TrekDetailResult.Found(entity.toTrekDetail(days, highlights))
+            }
         }
     }
 
-    // Hits GET /api/treks/{id} and writes days + highlights into Room.
-    // trek_cache is NOT re-written here — the list refresh already handles that.
-    // Returns NetworkResult so the ViewModel can surface errors.
-    suspend fun fetchAndCacheDetail(trekId: String): NetworkResult {
+    suspend fun fetchAndCacheDetail(trekId: String): NetworkResult<Unit> {
         return try {
-            val remote = TrekRetrofitInstance.api.getTrekById(trekId)
-            // Write days and highlights atomically per trek
+            val remote = api.getTrekById(trekId)
             itineraryDao.replaceForTrek(
                 trekId = trekId,
                 days   = remote.itineraryDays.map { it.toEntity(trekId) }
@@ -88,7 +79,7 @@ class TrekRepository(
                 trekId     = trekId,
                 highlights = remote.highlights.map { it.toEntity(trekId) }
             )
-            NetworkResult.Success
+            NetworkResult.Success(Unit)
         } catch (e: SocketTimeoutException) {
             NetworkResult.Timeout
         } catch (e: IOException) {
@@ -98,17 +89,13 @@ class TrekRepository(
         }
     }
 
-    // ── Refresh (called by TreksViewModel) ───────────────────────────────────
+    // ── Refresh ───────────────────────────────────────────────────────────────
 
-    // Refreshes the full trek list from the network.
-    // Only writes trek_cache — does NOT write itinerary/highlights here
-    // because the list endpoint returns empty arrays for those.
-    // Detail data is fetched lazily when the user opens a trek.
-    suspend fun refreshTreks(): NetworkResult {
+    suspend fun refreshTreks(): NetworkResult<Unit> {
         return try {
-            val remote = TrekRetrofitInstance.api.getAllTreks()
+            val remote = api.getAllTreks()
             cacheDao.replaceAll(remote.map { it.toCacheEntity() })
-            NetworkResult.Success
+            NetworkResult.Success(Unit)
         } catch (e: SocketTimeoutException) {
             NetworkResult.Timeout
         } catch (e: IOException) {
@@ -122,11 +109,14 @@ class TrekRepository(
         downloadedDao.deleteByTrekId(trekId)
     }
 
-    suspend fun getTrekById(trekId: String): TrekItem? {
-        return cacheDao.getTrekById(trekId)?.toTrekItem()
-    }
+    suspend fun getTrekById(trekId: String): TrekItem? =
+        cacheDao.getTrekById(trekId)?.toTrekItem()
 
     // ── Mappers ───────────────────────────────────────────────────────────────
+
+    private companion object {
+        const val IMG_DELIMITER = "\u001F"
+    }
 
     private fun TrekApiModel.toCacheEntity() = TrekCacheEntity(
         id             = id,
@@ -142,7 +132,7 @@ class TrekRepository(
         waypointsUrl   = waypointsUrl,
         tilesSizeMb    = tilesSizeMb,
         thumbnailUrl   = thumbnailUrl,
-        imagesUrl      = imagesUrl?.joinToString(","),
+        imagesUrl      = imagesUrl?.joinToString(IMG_DELIMITER),
         waypointsCount = waypointsCount,
         basePoint      = basePoint
     )
@@ -160,14 +150,38 @@ class TrekRepository(
         iconName = iconName
     )
 
-    private fun TrekCacheEntity.toTrekItem() = TrekItem(
+    private fun TrekCacheEntity.parseImagesUrl(): List<String> {
+        if (imagesUrl.isNullOrBlank()) return emptyList()
+        val delimiter = if (imagesUrl.contains(IMG_DELIMITER)) IMG_DELIMITER else ","
+        return imagesUrl.split(delimiter).map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    private data class CommonFields(
+        val id:             String,
+        val name:           String,
+        val region:         String,
+        val difficulty:     String,
+        val durationDays:   Int,
+        val maxElevation:   Int,
+        val distanceKm:     Double,
+        val description:    String,
+        val fileSizeMb:     Int,
+        val tilesUrl:       String?,
+        val gpxUrl:         String?,
+        val waypointsUrl:   String?,
+        val waypointsCount: Int?,
+        val thumbnailUrl:   String?,
+        val imagesUrl:      List<String>
+    )
+
+    private fun TrekCacheEntity.toCommonFields() = CommonFields(
         id             = id,
         name           = name,
         region         = region ?: "",
         difficulty     = difficulty ?: "Easy",
         durationDays   = durationDays ?: 0,
         maxElevation   = maxElevation ?: 0,
-        distanceKm     = distanceKm?.toInt() ?: 0,
+        distanceKm     = distanceKm ?: 0.0,
         description    = description ?: "",
         fileSizeMb     = tilesSizeMb?.toInt() ?: 0,
         tilesUrl       = tilesUrl,
@@ -175,38 +189,65 @@ class TrekRepository(
         waypointsUrl   = waypointsUrl,
         waypointsCount = waypointsCount,
         thumbnailUrl   = thumbnailUrl?.toCloudinaryThumbnail(),
-        imagesUrl      = imagesUrl
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
+        imagesUrl      = parseImagesUrl()
     )
+
+    private fun TrekCacheEntity.toTrekItem(): TrekItem {
+        val c = toCommonFields()
+        return TrekItem(
+            id             = c.id,
+            name           = c.name,
+            region         = c.region,
+            difficulty     = c.difficulty,
+            durationDays   = c.durationDays,
+            maxElevation   = c.maxElevation,
+            distanceKm     = c.distanceKm,
+            description    = c.description,
+            fileSizeMb     = c.fileSizeMb,
+            tilesUrl       = c.tilesUrl,
+            gpxUrl         = c.gpxUrl,
+            waypointsUrl   = c.waypointsUrl,
+            waypointsCount = c.waypointsCount,
+            thumbnailUrl   = c.thumbnailUrl,
+            imagesUrl      = c.imagesUrl
+        )
+    }
 
     private fun TrekCacheEntity.toTrekDetail(
         days:       List<TrekItineraryDayEntity>,
         highlights: List<TrekHighlightEntity>
-    ) = TrekDetail(
-        id             = id,
-        name           = name,
-        region         = region ?: "",
-        difficulty     = difficulty ?: "Easy",
-        durationDays   = durationDays ?: 0,
-        maxElevation   = maxElevation ?: 0,
-        distanceKm     = distanceKm?.toInt() ?: 0,
-        description    = description ?: "",
-        fileSizeMb     = tilesSizeMb?.toInt() ?: 0,
-        tilesUrl       = tilesUrl,
-        gpxUrl         = gpxUrl,
-        waypointsUrl   = waypointsUrl,
-        waypointsCount = waypointsCount,
-        thumbnailUrl   = thumbnailUrl?.toCloudinaryThumbnail(),
-        imagesUrl      = imagesUrl
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList(),
-        basePoint      = basePoint,
-        itineraryDays  = days.map { ItineraryDay(it.dayNumber, it.title, it.description) },
-        highlights     = highlights.map { TrailHighlight(it.label, it.iconName) }
-    )
+    ): TrekDetail {
+        val c = toCommonFields()
+        return TrekDetail(
+            id             = c.id,
+            name           = c.name,
+            region         = c.region,
+            difficulty     = c.difficulty,
+            durationDays   = c.durationDays,
+            maxElevation   = c.maxElevation,
+            distanceKm     = c.distanceKm,
+            description    = c.description,
+            fileSizeMb     = c.fileSizeMb,
+            tilesUrl       = c.tilesUrl,
+            gpxUrl         = c.gpxUrl,
+            waypointsUrl   = c.waypointsUrl,
+            waypointsCount = c.waypointsCount,
+            thumbnailUrl   = c.thumbnailUrl,
+            imagesUrl      = c.imagesUrl,
+            basePoint      = basePoint,
+            itineraryDays  = days.map { ItineraryDay(it.dayNumber, it.title, it.description) },
+            highlights     = highlights.map { TrailHighlight(it.label, it.iconName) }
+        )
+    }
+}
+
+// ── TrekDetailResult ──────────────────────────────────────────────────────────
+// Kept in this file so it's in the same package as TrekRepository.
+// TrekDetailViewModel imports it as:
+//   import com.example.namastays.repository.TrekDetailResult
+
+sealed class TrekDetailResult {
+    data class Found(val detail: TrekDetail)               : TrekDetailResult()
+    data class NetworkError(val result: NetworkResult<*>)  : TrekDetailResult()
+    object NotFound                                         : TrekDetailResult()
 }

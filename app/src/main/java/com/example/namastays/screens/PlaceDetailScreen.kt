@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.Landscape
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Water
+import com.example.namastays.NamastaysApp
 
 private fun iconForTag(tag: String): ImageVector = when {
     tag.contains("photo", ignoreCase = true) || tag.contains("camera", ignoreCase = true)                -> Icons.Outlined.CameraAlt
@@ -116,8 +117,10 @@ fun PlaceDetailScreen(
     citySlug: String,
     placeSlug: String,
     navController: NavController,
-    viewModel: PlaceDetailViewModel = viewModel()
-) {
+    viewModel: PlaceDetailViewModel = run {
+        val app = LocalContext.current.applicationContext as NamastaysApp
+        viewModel(factory = PlaceDetailViewModel.Factory(app.deps.placeRepository))
+    }) {
     // Collect sealed UiState — replaces the three separate mutableStateOf reads
     val uiState   by viewModel.uiState.collectAsStateWithLifecycle()
     val context   = LocalContext.current

@@ -11,7 +11,12 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -25,7 +30,6 @@ import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,13 +45,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.namastays.data.SleepAltitudeRecord
 import com.example.namastays.data.TrekSession
 import com.example.namastays.ui.theme.TrekColors
-import com.example.namastays.utilities.TrekTrackingService
 import com.example.namastays.viewmodel.TrekViewModel
 import com.example.namastays.viewmodel.TrekViewModelFactory
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
@@ -59,16 +64,16 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 // ─── Altitude zone ─────────────────────────────────────────────────────────────
+
 enum class AltitudeZone(val label: String, val color: Color) {
-    NORMAL("Normal",                 Color(0xFF2E7D32)),
+    NORMAL("Normal",           Color(0xFF2E7D32)),
     ACCLIMATIZATION("Acclimatization", Color(0xFFF9A825)),
-    HIGH_RISK("High Risk",           Color(0xFFEF6C00)),
-    EXTREME("Extreme",               Color(0xFFC62828))
+    HIGH_RISK("High Risk",     Color(0xFFEF6C00)),
+    EXTREME("Extreme",         Color(0xFFC62828))
 }
 
-// TrekColors lives in TrekTheme.kt — shared across all Trek screens.
-
 // ─── Helpers ───────────────────────────────────────────────────────────────────
+
 fun altitudeToZone(alt: Double): AltitudeZone = when {
     alt < 2_500 -> AltitudeZone.NORMAL
     alt < 3_500 -> AltitudeZone.ACCLIMATIZATION
@@ -82,21 +87,18 @@ private fun isLocationEnabled(context: android.content.Context): Boolean {
             lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
 }
 
-/** Format elapsed milliseconds as "2h 14m" or "34m" or "<1 m". */
 private fun fmtDuration(ms: Long): String {
     if (ms <= 0L) return "—"
     val h = TimeUnit.MILLISECONDS.toHours(ms)
     val m = TimeUnit.MILLISECONDS.toMinutes(ms) % 60
     return when {
-        h > 0  -> "${h}h ${m}m"
-        m > 0  -> "${m}m"
-        else   -> "<1 m"
+        h > 0 -> "${h}h ${m}m"
+        m > 0 -> "${m}m"
+        else  -> "<1 m"
     }
 }
 
-/** Avg pace as "14′30″/km". Returns "—" when speed is too low to be meaningful. */
 private fun fmtPace(kmh: Double): String {
-    // Below 0.5 km/h the pace number would be absurdly large; show dash instead.
     if (kmh < 0.5) return "—"
     val minPerKm = 60.0 / kmh
     val min = minPerKm.toInt()
@@ -126,6 +128,7 @@ private fun formatTime(ms: Long): String =
     SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(ms))
 
 // ─── Session filter ────────────────────────────────────────────────────────────
+
 enum class SessionFilter(val label: String) {
     THIS_WEEK("This Week"),
     THIS_MONTH("This Month"),
@@ -133,14 +136,34 @@ enum class SessionFilter(val label: String) {
 }
 
 private fun List<TrekSession>.applyFilter(filter: SessionFilter): List<TrekSession> {
-    val nowMs   = System.currentTimeMillis()
-    val cutoff  = when (filter) {
+    val nowMs  = System.currentTimeMillis()
+    val cutoff = when (filter) {
         SessionFilter.THIS_WEEK  -> nowMs - 7L  * 24 * 60 * 60 * 1_000
         SessionFilter.THIS_MONTH -> nowMs - 30L * 24 * 60 * 60 * 1_000
         SessionFilter.ALL_TIME   -> 0L
     }
     return filter { it.startMs >= cutoff }
 }
+
+// ─── Stateful screen ───────────────────────────────────────────────────────────
+
+/**
+ * Stateful entry point for Trek Mode.
+ *
+ * Toggle source of truth:
+ *   [isTracking] is derived from [TrekViewModel.isTracking], which reflects
+ *   whether TrekEngine currently has an open Room session
+ *   (currentSessionId != null). This means:
+ *
+ *   • No rememberSaveable needed for the toggle — it always matches reality.
+ *   • Process death + service still running → relaunch shows toggle ON.
+ *   • Service killed by system → isTracking becomes false automatically.
+ *   • Notification Stop button → service stops → engine clears sessionId
+ *     → isTracking becomes false → toggle switches OFF in the UI.
+ *
+ * Permission + GPS checks are still performed before calling startTrekMode()
+ * to give the user a clear error dialog rather than a silent service failure.
+ */
 @RequiresApi(Build.VERSION_CODES.O)
 @SuppressLint("DefaultLocale")
 @Composable
@@ -154,53 +177,75 @@ fun TrekModeScreen(
         factory = TrekViewModelFactory(context.applicationContext as Application)
     )
 
-    val state           by viewModel.trekState.collectAsState()
-    val allSleepRecords by viewModel.allSleepRecords.collectAsState()
-    val allSessions     by viewModel.allSessions.collectAsState()
+    // ── Service-truth toggle ──────────────────────────────────────────────────
+    // collectAsStateWithLifecycle stops collecting when the screen is not
+    // visible (Lifecycle.State.STARTED), preventing wasted work in background.
+    val isTracking      by viewModel.isTracking.collectAsStateWithLifecycle()
+    val state           by viewModel.trekState.collectAsStateWithLifecycle()
+    val allSleepRecords by viewModel.allSleepRecords.collectAsStateWithLifecycle()
+    val allSessions     by viewModel.allSessions.collectAsStateWithLifecycle()
 
-    var trekModeEnabled     by rememberSaveable { mutableStateOf(false) }
+    // ── Dialog / sheet visibility ─────────────────────────────────────────────
     var showOverwriteDialog by remember { mutableStateOf(false) }
     var showAnalyticsSheet  by remember { mutableStateOf(false) }
     var showLocationDialog  by remember { mutableStateOf(false) }
 
-    val requiredPermissions = arrayOf(
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+    // ── Permission launcher ───────────────────────────────────────────────────
+    val requiredPermissions = remember {
+        arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val granted = permissions.values.all { it }
-        if (granted) {
-            if (isLocationEnabled(context)) {
-                ContextCompat.startForegroundService(
-                    context, Intent(context, TrekTrackingService::class.java)
-                )
-                trekModeEnabled = true
-            } else {
-                showLocationDialog = true
-            }
-        } else {
-            trekModeEnabled = false
+        when {
+            !granted                    -> { /* toggle stays OFF — isTracking is false */ }
+            !isLocationEnabled(context) -> showLocationDialog = true
+            else                        -> viewModel.startTrekMode()
         }
     }
 
-    // ── Location dialog ────────────────────────────────────────────────────────
+    // ── Helper: attempt to start trek mode with checks ────────────────────────
+    // Extracted so both the toggle and any future "Start" button call it.
+    val attemptStart: () -> Unit = remember(context) {
+        {
+            val hasPerm = requiredPermissions.all { perm ->
+                ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+            }
+            when {
+                !hasPerm                    -> permissionLauncher.launch(requiredPermissions)
+                !isLocationEnabled(context) -> showLocationDialog = true
+                else                        -> viewModel.startTrekMode()
+            }
+        }
+    }
+
+    // ── Location dialog ───────────────────────────────────────────────────────
     if (showLocationDialog) {
         AlertDialog(
             onDismissRequest = { showLocationDialog = false },
-            shape          = RoundedCornerShape(20.dp),
-            containerColor = TrekColors.surface,
+            shape            = RoundedCornerShape(20.dp),
+            containerColor   = TrekColors.surface,
             title = {
-                Text("Location Required", fontFamily = PlusJakartaSans,
-                    fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TrekColors.onSurface)
+                Text(
+                    "Location Required",
+                    fontFamily = PlusJakartaSans,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 17.sp,
+                    color      = TrekColors.onSurface
+                )
             },
             text = {
                 Text(
                     "Trek Mode needs GPS to be enabled. Please turn on Location in device settings.",
-                    fontFamily = PlusJakartaSans, fontSize = 14.sp,
-                    color = TrekColors.onSurfaceSub, lineHeight = 20.sp
+                    fontFamily = PlusJakartaSans,
+                    fontSize   = 14.sp,
+                    color      = TrekColors.onSurfaceSub,
+                    lineHeight = 20.sp
                 )
             },
             confirmButton = {
@@ -208,8 +253,12 @@ fun TrekModeScreen(
                     showLocationDialog = false
                     context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                 }) {
-                    Text("Open Settings", color = TrekColors.accent,
-                        fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Open Settings",
+                        color      = TrekColors.accent,
+                        fontFamily = PlusJakartaSans,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             },
             dismissButton = {
@@ -220,13 +269,13 @@ fun TrekModeScreen(
         )
     }
 
-    // ── Overwrite sleep altitude dialog ────────────────────────────────────────
+    // ── Overwrite sleep altitude dialog ───────────────────────────────────────
     if (showOverwriteDialog) {
         AlertDialog(
             onDismissRequest = { showOverwriteDialog = false },
-            shape          = RoundedCornerShape(24.dp),
-            containerColor = TrekColors.surface,
-            title          = null,
+            shape            = RoundedCornerShape(24.dp),
+            containerColor   = TrekColors.surface,
+            title            = null,
             text = {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -234,79 +283,142 @@ fun TrekModeScreen(
                     modifier            = Modifier.fillMaxWidth()
                 ) {
                     Box(
-                        modifier         = Modifier.size(56.dp).clip(CircleShape)
+                        modifier         = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
                             .background(TrekColors.accentLight),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Outlined.Bedtime, contentDescription = null,
-                            tint = TrekColors.accent, modifier = Modifier.size(28.dp))
+                        Icon(
+                            Icons.Outlined.Bedtime,
+                            contentDescription = null,
+                            tint     = TrekColors.accent,
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
-                    Text("Update Sleep Altitude?", fontFamily = PlusJakartaSans,
-                        fontWeight = FontWeight.Bold, fontSize = 18.sp,
-                        color = TrekColors.onSurface, textAlign = TextAlign.Center)
+                    Text(
+                        "Update Sleep Altitude?",
+                        fontFamily  = PlusJakartaSans,
+                        fontWeight  = FontWeight.Bold,
+                        fontSize    = 18.sp,
+                        color       = TrekColors.onSurface,
+                        textAlign   = TextAlign.Center
+                    )
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Column(
-                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(TrekColors.surfaceAlt)
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Text("LOGGED TODAY", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.8.sp, color = TrekColors.onSurfaceSub, fontFamily = PlusJakartaSans)
-                            Text("Already set", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                color = TrekColors.onSurfaceSub, fontFamily = PlusJakartaSans)
+                            Text(
+                                "LOGGED TODAY",
+                                fontSize      = 9.sp,
+                                fontWeight    = FontWeight.SemiBold,
+                                letterSpacing = 0.8.sp,
+                                color         = TrekColors.onSurfaceSub,
+                                fontFamily    = PlusJakartaSans
+                            )
+                            Text(
+                                "Already set",
+                                fontSize   = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color      = TrekColors.onSurfaceSub,
+                                fontFamily = PlusJakartaSans
+                            )
                         }
-                        Icon(Icons.Outlined.ArrowForward, contentDescription = null,
-                            tint = TrekColors.onSurfaceSub, modifier = Modifier.size(16.dp))
+                        Icon(
+                            Icons.Outlined.ArrowForward,
+                            contentDescription = null,
+                            tint     = TrekColors.onSurfaceSub,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Column(
-                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(TrekColors.accentLight)
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Text("NEW READING", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.8.sp, color = TrekColors.accent, fontFamily = PlusJakartaSans)
-                            Text("${state.altitude.toInt()} m", fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold, color = TrekColors.accent, fontFamily = PlusJakartaSans)
+                            Text(
+                                "NEW READING",
+                                fontSize      = 9.sp,
+                                fontWeight    = FontWeight.SemiBold,
+                                letterSpacing = 0.8.sp,
+                                color         = TrekColors.accent,
+                                fontFamily    = PlusJakartaSans
+                            )
+                            Text(
+                                "${state.altitude.toInt()} m",
+                                fontSize   = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color      = TrekColors.accent,
+                                fontFamily = PlusJakartaSans
+                            )
                         }
                     }
-                    Text("Replace today's sleep altitude with the new reading?",
-                        fontFamily = PlusJakartaSans, fontSize = 13.sp,
-                        color = TrekColors.onSurfaceSub, textAlign = TextAlign.Center, lineHeight = 19.sp)
+                    Text(
+                        "Replace today's sleep altitude with the new reading?",
+                        fontFamily = PlusJakartaSans,
+                        fontSize   = 13.sp,
+                        color      = TrekColors.onSurfaceSub,
+                        textAlign  = TextAlign.Center,
+                        lineHeight = 19.sp
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        coroutineScope.launch { viewModel.saveSleepAltitude(state.altitude) }
+                        coroutineScope.launch {
+                            viewModel.saveSleepAltitude(state.altitude)
+                        }
                         showOverwriteDialog = false
                     },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    colors   = ButtonDefaults.buttonColors(containerColor = TrekColors.accent),
-                    shape    = RoundedCornerShape(14.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = TrekColors.accent),
+                    shape  = RoundedCornerShape(14.dp)
                 ) {
-                    Text("Replace Altitude", fontFamily = PlusJakartaSans,
-                        fontWeight = FontWeight.Bold, fontSize = 14.sp,
-                        color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
+                    Text(
+                        "Replace Altitude",
+                        fontFamily = PlusJakartaSans,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 14.sp,
+                        color      = Color.White,
+                        modifier   = Modifier.padding(vertical = 4.dp)
+                    )
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick  = { showOverwriteDialog = false },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp)
                 ) {
-                    Text("Keep Existing", fontFamily = PlusJakartaSans,
-                        fontWeight = FontWeight.Medium, color = TrekColors.onSurfaceSub, fontSize = 14.sp)
+                    Text(
+                        "Keep Existing",
+                        fontFamily = PlusJakartaSans,
+                        fontWeight = FontWeight.Medium,
+                        color      = TrekColors.onSurfaceSub,
+                        fontSize   = 14.sp
+                    )
                 }
             }
         )
     }
 
+    // ── Analytics bottom sheet ────────────────────────────────────────────────
     if (showAnalyticsSheet) {
         SleepAltitudeAnalyticsSheet(
             records   = allSleepRecords,
@@ -314,8 +426,9 @@ fun TrekModeScreen(
         )
     }
 
+    // ── Stateless content ─────────────────────────────────────────────────────
     TrekModeContent(
-        trekModeEnabled  = trekModeEnabled,
+        isTracking       = isTracking,
         altitude         = state.altitude,
         altitudeZone     = state.altitudeZone,
         gainMeters       = state.gainMeters,
@@ -327,44 +440,28 @@ fun TrekModeScreen(
         longitude        = state.longitude,
         ascentRateM      = state.ascentRateM,
         inBatterySaver   = state.inBatterySaver,
-        recentSessions   = allSessions,          // filter applied inside TrekModeContent
-        onToggleTrekMode = { enabled ->
-            if (enabled) {
-                val hasPerm = requiredPermissions.all { perm ->
-                    ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
-                }
-                when {
-                    !hasPerm                   -> permissionLauncher.launch(requiredPermissions)
-                    !isLocationEnabled(context) -> showLocationDialog = true
-                    else -> {
-                        ContextCompat.startForegroundService(
-                            context, Intent(context, TrekTrackingService::class.java)
-                        )
-                        trekModeEnabled = true
-                    }
-                }
-            } else {
-                context.stopService(Intent(context, TrekTrackingService::class.java))
-                trekModeEnabled = false
-            }
+        recentSessions   = allSessions,
+        onToggleTrekMode = { enable ->
+            if (enable) attemptStart() else viewModel.stopTrekMode()
         },
         onMarkSleepAltitude = {
-            if (!trekModeEnabled) return@TrekModeContent
+            if (!isTracking) return@TrekModeContent
             coroutineScope.launch {
                 if (viewModel.todayRecordExists()) showOverwriteDialog = true
                 else viewModel.saveSleepAltitude(state.altitude)
             }
         },
-        onViewAnalytics  = { showAnalyticsSheet = true },
-        onSessionClick   = onSessionClick
+        onViewAnalytics = { showAnalyticsSheet = true },
+        onSessionClick  = onSessionClick
     )
 }
 
 // ─── Stateless content ─────────────────────────────────────────────────────────
+
 @SuppressLint("DefaultLocale")
 @Composable
 fun TrekModeContent(
-    trekModeEnabled     : Boolean,
+    isTracking          : Boolean,
     altitude            : Double,
     altitudeZone        : AltitudeZone,
     gainMeters          : Double,
@@ -374,256 +471,320 @@ fun TrekModeContent(
     accuracy            : Float,
     latitude            : Double,
     longitude           : Double,
-    ascentRateM         : Double       = 0.0,
-    inBatterySaver      : Boolean      = false,
-    recentSessions      : List<TrekSession> = emptyList(),
+    ascentRateM         : Double                = 0.0,
+    inBatterySaver      : Boolean               = false,
+    recentSessions      : List<TrekSession>     = emptyList(),
     onToggleTrekMode    : (Boolean) -> Unit,
-    onMarkSleepAltitude : () -> Unit   = {},
-    onViewAnalytics     : () -> Unit   = {},
+    onMarkSleepAltitude : () -> Unit            = {},
+    onViewAnalytics     : () -> Unit            = {},
     onSessionClick      : (TrekSession) -> Unit = {}
 ) {
-    // Filter state lives here — survives recomposition but not config change
-    // (that's fine; user can re-select a filter chip in one tap)
     var activeFilter by remember { mutableStateOf(SessionFilter.THIS_WEEK) }
     val filteredSessions = remember(recentSessions, activeFilter) {
         recentSessions.applyFilter(activeFilter).take(20)
+    }
+
+    // ── Copied-to-clipboard toast state ───────────────────────────────────────
+    var showCopiedToast by remember { mutableStateOf(false) }
+    LaunchedEffect(showCopiedToast) {
+        if (showCopiedToast) {
+            delay(2_000L)
+            showCopiedToast = false
+        }
     }
 
     Scaffold(
         containerColor      = TrekColors.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
-        LazyColumn(
-            modifier            = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .statusBarsPadding()
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            item { Spacer(Modifier.height(12.dp)) }
-            item { HeaderRow(trekModeEnabled, onToggleTrekMode) }
+        Box(Modifier.fillMaxSize()) {
 
-            // Status pill + battery saver pill side by side
-            item {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment     = Alignment.CenterVertically
-                ) {
-                    StatusPill(trekModeEnabled)
-                    if (inBatterySaver) BatterySaverPill()
-                }
-            }
+            LazyColumn(
+                modifier            = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item { Spacer(Modifier.height(12.dp)) }
+                item { HeaderRow(isTracking, onToggleTrekMode) }
 
-            item {
-                AltitudeHeroCard(
-                    altitude     = altitude,
-                    altitudeZone = altitudeZone,
-                    gainMeters   = gainMeters,
-                    lossMeters   = lossMeters,
-                    speedKmh     = speedKmh
-                )
-            }
-
-            // Metric cards row
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    MetricCard(
-                        modifier = Modifier.weight(1f),
-                        icon     = Icons.Outlined.Straighten,
-                        title    = "DISTANCE",
-                        value    = String.format("%.1f", distanceKm),
-                        unit     = "km"
-                    )
-                    MetricCard(
-                        modifier = Modifier.weight(1f),
-                        icon     = Icons.Outlined.GpsFixed,
-                        title    = "ACCURACY",
-                        value    = "±${accuracy.toInt()}",
-                        unit     = "m"
-                    )
-                    MetricCard(
-                        modifier = Modifier.weight(1f),
-                        icon     = Icons.Outlined.Speed,
-                        // fmtPace handles the <0.5 km/h edge case — never shows garbage
-                        title    = "AVG PACE",
-                        value    = fmtPace(speedKmh).substringBefore("/"),
-                        unit     = if (speedKmh >= 0.5) "/km" else ""
-                    )
-                }
-            }
-
-            // Ascent rate card — only shown when Trek Mode is active and moving
-            if (trekModeEnabled && ascentRateM > 0.0) {
-                item { AscentRateCard(ascentRateM) }
-            }
-
-            item { ElevationProfileCard(currentAltitude = altitude) }
-            item { CoordinatesCard(latitude, longitude) }
-
-            // Action buttons
-            item {
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(2.dp, RoundedCornerShape(16.dp))
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable(enabled = trekModeEnabled, onClick = onMarkSleepAltitude),
-                        color = if (trekModeEnabled) TrekColors.surface else TrekColors.surfaceAlt,
-                        shape = RoundedCornerShape(16.dp)
+                // Status pill + battery saver pill
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment     = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier              = Modifier.fillMaxWidth().padding(vertical = 18.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment     = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Outlined.Bedtime, contentDescription = "Mark Sleep Altitude",
-                                tint     = if (trekModeEnabled) TrekColors.onSurface else TrekColors.onSurfaceSub,
-                                modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(10.dp))
-                            Text("Mark Sleep Altitude",
-                                color      = if (trekModeEnabled) TrekColors.onSurface else TrekColors.onSurfaceSub,
-                                fontWeight = FontWeight.SemiBold, fontSize = 15.sp, fontFamily = PlusJakartaSans)
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(4.dp, RoundedCornerShape(16.dp))
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable(onClick = onViewAnalytics),
-                        color = TrekColors.accentGreen,
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Row(
-                            modifier              = Modifier.fillMaxWidth().padding(vertical = 18.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment     = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.ShowChart, contentDescription = "View Analytics",
-                                tint = Color.White, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(10.dp))
-                            Text("View Analytics", color = Color.White,
-                                fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = PlusJakartaSans)
-                        }
+                        StatusPill(isTracking)
+                        if (inBatterySaver) BatterySaverPill()
                     }
                 }
-            }
 
-            // ── Session logbook strip ──────────────────────────────────────────
-            if (recentSessions.isNotEmpty()) {
-                // Header row: label + filter chips
+                item {
+                    AltitudeHeroCard(
+                        altitude     = altitude,
+                        altitudeZone = altitudeZone,
+                        gainMeters   = gainMeters,
+                        lossMeters   = lossMeters,
+                        speedKmh     = speedKmh
+                    )
+                }
+
+                // Metric cards row
                 item {
                     Row(
                         Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment     = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            "RECENT SESSIONS",
-                            color         = TrekColors.onSurfaceSub,
-                            fontSize      = 11.sp,
-                            letterSpacing = 1.5.sp,
-                            fontWeight    = FontWeight.SemiBold,
-                            fontFamily    = PlusJakartaSans
+                        MetricCard(
+                            modifier = Modifier.weight(1f),
+                            icon     = Icons.Outlined.Straighten,
+                            title    = "DISTANCE",
+                            value    = String.format("%.1f", distanceKm),
+                            unit     = "km"
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SessionFilter.entries.forEach { filter ->
-                                val selected = filter == activeFilter
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50.dp))
-                                        .background(
-                                            if (selected) TrekColors.accentGreen
-                                            else TrekColors.surfaceAlt
-                                        )
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication        = null
-                                        ) { activeFilter = filter }
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                ) {
-                                    Text(
-                                        filter.label,
-                                        fontSize   = 10.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color      = if (selected) Color.White
-                                        else TrekColors.onSurfaceSub,
-                                        fontFamily = PlusJakartaSans
-                                    )
-                                }
+                        MetricCard(
+                            modifier = Modifier.weight(1f),
+                            icon     = Icons.Outlined.GpsFixed,
+                            title    = "ACCURACY",
+                            value    = "±${accuracy.toInt()}",
+                            unit     = "m"
+                        )
+                        MetricCard(
+                            modifier = Modifier.weight(1f),
+                            icon     = Icons.Outlined.Speed,
+                            title    = "AVG PACE",
+                            value    = fmtPace(speedKmh).substringBefore("/"),
+                            unit     = if (speedKmh >= 0.5) "/km" else ""
+                        )
+                    }
+                }
+
+                // Ascent rate — only when actively moving
+                if (isTracking && ascentRateM > 0.0) {
+                    item { AscentRateCard(ascentRateM) }
+                }
+
+                item { ElevationProfileCard(currentAltitude = altitude) }
+
+                item {
+                    CoordinatesCard(
+                        latitude  = latitude,
+                        longitude = longitude,
+                        onCopied  = { showCopiedToast = true }
+                    )
+                }
+
+                // Action buttons
+                item {
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .shadow(2.dp, RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable(
+                                    enabled = isTracking,
+                                    onClick = onMarkSleepAltitude
+                                ),
+                            color = if (isTracking) TrekColors.surface else TrekColors.surfaceAlt,
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Row(
+                                modifier              = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 18.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment     = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Bedtime,
+                                    contentDescription = "Mark Sleep Altitude",
+                                    tint     = if (isTracking) TrekColors.onSurface else TrekColors.onSurfaceSub,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "Mark Sleep Altitude",
+                                    color      = if (isTracking) TrekColors.onSurface else TrekColors.onSurfaceSub,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize   = 15.sp,
+                                    fontFamily = PlusJakartaSans
+                                )
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .shadow(4.dp, RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable(onClick = onViewAnalytics),
+                            color = TrekColors.accentGreen,
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Row(
+                                modifier              = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 18.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment     = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.ShowChart,
+                                    contentDescription = "View Analytics",
+                                    tint     = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "View Analytics",
+                                    color      = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize   = 15.sp,
+                                    fontFamily = PlusJakartaSans
+                                )
                             }
                         }
                     }
                 }
 
-                if (filteredSessions.isEmpty()) {
-                    // Empty state for current filter
+                // ── Session logbook ────────────────────────────────────────────
+                if (recentSessions.isNotEmpty()) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment     = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "RECENT SESSIONS",
+                                color         = TrekColors.onSurfaceSub,
+                                fontSize      = 11.sp,
+                                letterSpacing = 1.5.sp,
+                                fontWeight    = FontWeight.SemiBold,
+                                fontFamily    = PlusJakartaSans
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                SessionFilter.entries.forEach { filter ->
+                                    val selected = filter == activeFilter
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50.dp))
+                                            .background(
+                                                if (selected) TrekColors.accentGreen
+                                                else TrekColors.surfaceAlt
+                                            )
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication        = null
+                                            ) { activeFilter = filter }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    ) {
+                                        Text(
+                                            filter.label,
+                                            fontSize   = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color      = if (selected) Color.White
+                                            else TrekColors.onSurfaceSub,
+                                            fontFamily = PlusJakartaSans
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (filteredSessions.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(TrekColors.surface)
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "No sessions in ${activeFilter.label.lowercase()}",
+                                    color      = TrekColors.onSurfaceSub,
+                                    fontSize   = 13.sp,
+                                    fontFamily = PlusJakartaSans
+                                )
+                            }
+                        }
+                    } else {
+                        items(filteredSessions, key = { it.id }) { session ->
+                            SessionLogRow(
+                                session = session,
+                                onClick = { onSessionClick(session) }
+                            )
+                        }
+                    }
+
+                } else if (!isTracking) {
                     item {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(18.dp))
                                 .background(TrekColors.surface)
-                                .padding(vertical = 24.dp),
+                                .padding(vertical = 28.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                "No sessions in ${activeFilter.label.lowercase()}",
-                                color      = TrekColors.onSurfaceSub,
-                                fontSize   = 13.sp,
-                                fontFamily = PlusJakartaSans
-                            )
-                        }
-                    }
-                } else {
-                    items(filteredSessions, key = { it.id }) { session ->
-                        SessionLogRow(session = session, onClick = { onSessionClick(session) })
-                    }
-                }
-            } else if (!trekModeEnabled) {
-                // Empty state — no sessions at all yet
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(TrekColors.surface)
-                            .padding(vertical = 28.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Outlined.Hiking, contentDescription = null,
-                                tint = TrekColors.onSurfaceSub, modifier = Modifier.size(32.dp))
-                            Text("No sessions yet", color = TrekColors.onSurfaceSub,
-                                fontSize = 14.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans)
-                            Text("Toggle Trek Mode to start recording",
-                                color = TrekColors.onSurfaceSub, fontSize = 12.sp, fontFamily = PlusJakartaSans)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Hiking,
+                                    contentDescription = null,
+                                    tint     = TrekColors.onSurfaceSub,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Text(
+                                    "No sessions yet",
+                                    color      = TrekColors.onSurfaceSub,
+                                    fontSize   = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = PlusJakartaSans
+                                )
+                                Text(
+                                    "Toggle Trek Mode to start recording",
+                                    color      = TrekColors.onSurfaceSub,
+                                    fontSize   = 12.sp,
+                                    fontFamily = PlusJakartaSans
+                                )
+                            }
                         }
                     }
                 }
+
+                item { Spacer(Modifier.navigationBarsPadding().height(32.dp)) }
             }
 
-            item {
-                Spacer(Modifier.navigationBarsPadding().height(32.dp))
+            // ── Copied toast overlay ───────────────────────────────────────────
+            AnimatedVisibility(
+                visible  = showCopiedToast,
+                enter    = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+                exit     = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 }),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 24.dp)
+            ) {
+                CopiedToast()
             }
         }
     }
 }
 
-
 // ─── Analytics bottom sheet ────────────────────────────────────────────────────
+
 private val DAY_LABELS = listOf("M", "T", "W", "T", "F", "S", "S")
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -647,8 +808,6 @@ fun SleepAltitudeAnalyticsSheet(
         weekDays.map { recordMap[it.toString()] }
     }
 
-    // Fix #6: minimum sensible scale is 1000m so a single low reading
-    // doesn't make the bar fill the entire chart height.
     val maxAlt = remember(weekData) {
         weekData.filterNotNull()
             .maxOfOrNull { it.altitudeMeters }
@@ -666,7 +825,7 @@ fun SleepAltitudeAnalyticsSheet(
         onDismissRequest = onDismiss,
         containerColor   = TrekColors.background,
         sheetState       = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        dragHandle       = {
+        dragHandle = {
             Box(
                 Modifier
                     .padding(top = 12.dp, bottom = 4.dp)
@@ -705,7 +864,6 @@ fun SleepAltitudeAnalyticsSheet(
                         )
                     }
 
-                    // Week navigator pill
                     Surface(
                         shape           = RoundedCornerShape(50.dp),
                         color           = TrekColors.surface,
@@ -741,7 +899,8 @@ fun SleepAltitudeAnalyticsSheet(
                                 Icon(
                                     Icons.Outlined.ChevronRight,
                                     contentDescription = "Next week",
-                                    tint     = if (weekOffset < 0) TrekColors.onSurface else TrekColors.divider,
+                                    tint     = if (weekOffset < 0) TrekColors.onSurface
+                                    else TrekColors.divider,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -796,8 +955,8 @@ fun SleepAltitudeAnalyticsSheet(
     }
 }
 
-
 // ─── Bar chart ─────────────────────────────────────────────────────────────────
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun SleepBarChart(
@@ -817,7 +976,6 @@ private fun SleepBarChart(
             .background(TrekColors.surface)
             .padding(20.dp)
     ) {
-        // Tooltip — fixed height box to prevent layout shift
         val selRecord = selectedIndex?.let { data[it] }
         Box(
             modifier         = Modifier
@@ -849,8 +1007,6 @@ private fun SleepBarChart(
             modifier          = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom
         ) {
-            // Y-axis labels
-            // Fix #7: widened to 42.dp so 3-digit labels don't clip
             Column(
                 modifier            = Modifier
                     .width(42.dp)
@@ -865,20 +1021,18 @@ private fun SleepBarChart(
                         else             -> "$altValue"
                     }
                     Text(
-                        text       = "${label}m",
-                        fontSize   = 9.sp,
-                        color      = TrekColors.onSurfaceSub,
+                        text      = "${label}m",
+                        fontSize  = 9.sp,
+                        color     = TrekColors.onSurfaceSub,
                         fontFamily = PlusJakartaSans,
-                        textAlign  = TextAlign.End,
-                        modifier   = Modifier.fillMaxWidth()
+                        textAlign = TextAlign.End,
+                        modifier  = Modifier.fillMaxWidth()
                     )
                 }
             }
 
             Spacer(Modifier.width(8.dp))
 
-            // Fix #1: each day is a fully-clickable Column; graphicsLayer
-            // is applied only to the visual Bar Box, not the touch target.
             Row(
                 modifier              = Modifier
                     .weight(1f)
@@ -894,10 +1048,9 @@ private fun SleepBarChart(
                     val isSelected = i == selectedIndex
                     val isToday    = weekDays.getOrNull(i) == LocalDate.now()
 
-                    // Scale animates only the bar visual, touch target stays full size
                     val scale by animateFloatAsState(
-                        targetValue    = if (isSelected) 1.05f else 1f,
-                        animationSpec  = spring(
+                        targetValue   = if (isSelected) 1.05f else 1f,
+                        animationSpec = spring(
                             dampingRatio = Spring.DampingRatioMediumBouncy,
                             stiffness    = Spring.StiffnessMedium
                         ),
@@ -917,8 +1070,6 @@ private fun SleepBarChart(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Bottom
                     ) {
-                        // Bar visual with scale animation — graphicsLayer here only,
-                        // so touch bounds are unaffected
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(0.65f)
@@ -927,13 +1078,13 @@ private fun SleepBarChart(
                                 .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
                                 .background(
                                     when {
-                                        frac == 0f  -> Brush.verticalGradient(
+                                        frac == 0f -> Brush.verticalGradient(
                                             listOf(Color(0xFFF0F0F0), Color(0xFFF0F0F0))
                                         )
-                                        isSelected  -> Brush.verticalGradient(
+                                        isSelected -> Brush.verticalGradient(
                                             listOf(TrekColors.barGreen, TrekColors.barGreenDark)
                                         )
-                                        else        -> Brush.verticalGradient(
+                                        else       -> Brush.verticalGradient(
                                             listOf(TrekColors.barBlueDark, TrekColors.barBlue)
                                         )
                                     }
@@ -951,7 +1102,8 @@ private fun SleepBarChart(
                                 isToday    -> TrekColors.accent
                                 else       -> TrekColors.onSurfaceSub
                             },
-                            fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
+                            fontWeight = if (isSelected || isToday) FontWeight.Bold
+                            else FontWeight.Normal,
                             fontFamily = PlusJakartaSans
                         )
                     }
@@ -962,6 +1114,7 @@ private fun SleepBarChart(
 }
 
 // ─── Detail card ───────────────────────────────────────────────────────────────
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun SleepDetailCard(date: LocalDate, record: SleepAltitudeRecord?) {
@@ -1008,7 +1161,6 @@ private fun SleepDetailCard(date: LocalDate, record: SleepAltitudeRecord?) {
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Altitude chip
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50.dp))
@@ -1032,7 +1184,6 @@ private fun SleepDetailCard(date: LocalDate, record: SleepAltitudeRecord?) {
                     )
                 }
 
-                // Zone chip
                 val zoneBg = zone?.color?.copy(alpha = 0.12f) ?: TrekColors.surfaceAlt
                 Box(
                     modifier = Modifier
@@ -1050,7 +1201,6 @@ private fun SleepDetailCard(date: LocalDate, record: SleepAltitudeRecord?) {
                 }
             }
 
-            // Logged time
             Row(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1077,6 +1227,7 @@ private fun SleepDetailCard(date: LocalDate, record: SleepAltitudeRecord?) {
 }
 
 // ─── Weekly summary row ────────────────────────────────────────────────────────
+
 @Composable
 private fun WeeklySummaryRow(weekData: List<SleepAltitudeRecord?>) {
     val recorded = weekData.count { it != null }
@@ -1145,7 +1296,7 @@ private fun SummaryChip(modifier: Modifier, label: String, value: String, valueC
 }
 
 // ─── AMS warning card ──────────────────────────────────────────────────────────
-// Fix #5: left accent border is now properly drawn via a layered Box.
+
 @Composable
 private fun AmsWarningCard() {
     Box(
@@ -1154,7 +1305,6 @@ private fun AmsWarningCard() {
             .clip(RoundedCornerShape(16.dp))
             .background(TrekColors.amsBackground)
     ) {
-        // Left accent border strip
         Box(
             modifier = Modifier
                 .width(4.dp)
@@ -1203,6 +1353,7 @@ private fun AmsWarningCard() {
 }
 
 // ─── Battery saver pill ────────────────────────────────────────────────────────
+
 @Composable
 private fun BatterySaverPill() {
     Row(
@@ -1231,9 +1382,10 @@ private fun BatterySaverPill() {
 }
 
 // ─── Ascent rate card ──────────────────────────────────────────────────────────
+
 @Composable
 private fun AscentRateCard(ascentRateM: Double) {
-    val isHighRate = ascentRateM > 300.0   // > 300 m/hr is aggressive for acclimatization
+    val isHighRate = ascentRateM > 300.0
     val color      = if (isHighRate) TrekColors.amsOrange else TrekColors.accentGreen
     val bg         = if (isHighRate) TrekColors.amsBackground else TrekColors.surface
 
@@ -1248,12 +1400,18 @@ private fun AscentRateCard(ascentRateM: Double) {
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Box(
-            modifier         = Modifier.size(40.dp).clip(CircleShape)
+            modifier         = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
                 .background(color.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.TrendingUp, contentDescription = null,
-                tint = color, modifier = Modifier.size(20.dp))
+            Icon(
+                Icons.Outlined.TrendingUp,
+                contentDescription = null,
+                tint     = color,
+                modifier = Modifier.size(20.dp)
+            )
         }
         Column(Modifier.weight(1f)) {
             Text(
@@ -1274,13 +1432,18 @@ private fun AscentRateCard(ascentRateM: Double) {
             )
         }
         if (isHighRate) {
-            Icon(Icons.Outlined.Warning, contentDescription = "High ascent rate",
-                tint = color, modifier = Modifier.size(18.dp))
+            Icon(
+                Icons.Outlined.Warning,
+                contentDescription = "High ascent rate",
+                tint     = color,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
 
 // ─── Session log row ───────────────────────────────────────────────────────────
+
 @Composable
 private fun SessionLogRow(session: TrekSession, onClick: () -> Unit) {
     val durationMs = if (session.endMs > 0) session.endMs - session.startMs else 0L
@@ -1297,12 +1460,18 @@ private fun SessionLogRow(session: TrekSession, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Box(
-            modifier         = Modifier.size(40.dp).clip(CircleShape)
+            modifier         = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
                 .background(TrekColors.accentLight),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.Hiking, contentDescription = null,
-                tint = TrekColors.accent, modifier = Modifier.size(20.dp))
+            Icon(
+                Icons.Outlined.Hiking,
+                contentDescription = null,
+                tint     = TrekColors.accent,
+                modifier = Modifier.size(20.dp)
+            )
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
@@ -1330,32 +1499,42 @@ private fun SessionLogRow(session: TrekSession, onClick: () -> Unit) {
                 fontFamily = PlusJakartaSans
             )
         }
-        Icon(Icons.Outlined.ChevronRight, contentDescription = "View details",
-            tint = TrekColors.onSurfaceSub, modifier = Modifier.size(18.dp))
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = "View details",
+            tint     = TrekColors.onSurfaceSub,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 
-// ─── All sub-composables below are unchanged from original ─────────────────────
-// (HeaderRow, StatusPill, AltitudeHeroCard, HeroMetricItem, MetricCard,
-//  ElevationProfileCard, CoordinatesCard, SleepAltitudeAnalyticsSheet,
-//  SleepBarChart, SleepDetailCard, WeeklySummaryRow, SummaryChip, AmsWarningCard)
-// Paste your existing implementations here — none of their logic changed.
+// ─── Sub-composables ───────────────────────────────────────────────────────────
 
 @Composable
-private fun HeaderRow(trekModeEnabled: Boolean, onToggle: (Boolean) -> Unit) {
+private fun HeaderRow(isTracking: Boolean, onToggle: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically
     ) {
         Column {
-            Text("Trek Mode", color = TrekColors.onSurface, fontSize = 30.sp,
-                fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp, fontFamily = PlusJakartaSans)
-            Text("Live expedition tracking", color = TrekColors.onSurfaceSub,
-                fontSize = 14.sp, fontFamily = PlusJakartaSans)
+            Text(
+                "Trek Mode",
+                color       = TrekColors.onSurface,
+                fontSize    = 30.sp,
+                fontWeight  = FontWeight.ExtraBold,
+                letterSpacing = (-0.5).sp,
+                fontFamily  = PlusJakartaSans
+            )
+            Text(
+                "Live expedition tracking",
+                color      = TrekColors.onSurfaceSub,
+                fontSize   = 14.sp,
+                fontFamily = PlusJakartaSans
+            )
         }
         Switch(
-            checked         = trekModeEnabled,
+            checked         = isTracking,
             onCheckedChange = onToggle,
             colors          = SwitchDefaults.colors(
                 checkedThumbColor   = Color.White,
@@ -1370,9 +1549,10 @@ private fun HeaderRow(trekModeEnabled: Boolean, onToggle: (Boolean) -> Unit) {
 @Composable
 private fun StatusPill(active: Boolean) {
     val dotAlpha by rememberInfiniteTransition(label = "dot").animateFloat(
-        initialValue  = 0.35f, targetValue = 1f,
+        initialValue  = 0.35f,
+        targetValue   = 1f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "alpha"
+        label         = "alpha"
     )
     Row(
         modifier = Modifier
@@ -1382,15 +1562,23 @@ private fun StatusPill(active: Boolean) {
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Box(Modifier.size(7.dp).clip(CircleShape).background(
-            if (active) TrekColors.activeGreen.copy(alpha = dotAlpha)
-            else TrekColors.onSurfaceSub.copy(alpha = 0.5f)
-        ))
+        Box(
+            Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(
+                    if (active) TrekColors.activeGreen.copy(alpha = dotAlpha)
+                    else TrekColors.onSurfaceSub.copy(alpha = 0.5f)
+                )
+        )
         Text(
             if (active) "TREK MODE ACTIVE" else "TREK MODE INACTIVE",
-            fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
-            color = if (active) TrekColors.accent else TrekColors.onSurfaceSub,
-            fontFamily = PlusJakartaSans, maxLines = 1
+            fontSize   = 11.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.8.sp,
+            color      = if (active) TrekColors.accent else TrekColors.onSurfaceSub,
+            fontFamily = PlusJakartaSans,
+            maxLines   = 1
         )
     }
 }
@@ -1405,44 +1593,76 @@ private fun AltitudeHeroCard(
     speedKmh     : Double
 ) {
     Box(
-        modifier = Modifier.fillMaxWidth().shadow(6.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp)).background(TrekColors.surface)
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(6.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(TrekColors.surface)
             .padding(horizontal = 22.dp, vertical = 24.dp)
     ) {
         Column {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top) {
-                Text("CURRENT ALTITUDE", color = TrekColors.onSurfaceSub, fontSize = 11.sp,
-                    letterSpacing = 1.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans)
-                Box(modifier = Modifier.clip(RoundedCornerShape(50.dp))
-                    .background(altitudeZone.color.copy(alpha = 0.12f))
-                    .padding(horizontal = 12.dp, vertical = 5.dp)) {
-                    Text(altitudeZone.label.uppercase(), color = altitudeZone.color,
-                        fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp, fontFamily = PlusJakartaSans)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.Top
+            ) {
+                Text(
+                    "CURRENT ALTITUDE",
+                    color         = TrekColors.onSurfaceSub,
+                    fontSize      = 11.sp,
+                    letterSpacing = 1.5.sp,
+                    fontWeight    = FontWeight.SemiBold,
+                    fontFamily    = PlusJakartaSans
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50.dp))
+                        .background(altitudeZone.color.copy(alpha = 0.12f))
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        altitudeZone.label.uppercase(),
+                        color         = altitudeZone.color,
+                        fontSize      = 11.sp,
+                        fontWeight    = FontWeight.Bold,
+                        letterSpacing = 0.5.sp,
+                        fontFamily    = PlusJakartaSans
+                    )
                 }
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     if (altitude > 0) "%,d".format(altitude.toInt()) else "—",
-                    color = TrekColors.onSurface, fontSize = 68.sp,
-                    fontWeight = FontWeight.ExtraBold, letterSpacing = (-2).sp,
-                    lineHeight = 68.sp, fontFamily = PlusJakartaSans
+                    color       = TrekColors.onSurface,
+                    fontSize    = 68.sp,
+                    fontWeight  = FontWeight.ExtraBold,
+                    letterSpacing = (-2).sp,
+                    lineHeight  = 68.sp,
+                    fontFamily  = PlusJakartaSans
                 )
-                Text(" m", color = TrekColors.onSurfaceSub, fontSize = 26.sp,
-                    fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 10.dp),
-                    fontFamily = PlusJakartaSans)
+                Text(
+                    " m",
+                    color      = TrekColors.onSurfaceSub,
+                    fontSize   = 26.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier   = Modifier.padding(bottom = 10.dp),
+                    fontFamily = PlusJakartaSans
+                )
             }
-            Text("Raw Sensors – Real data may vary", color = TrekColors.onSurfaceSub,
-                fontSize = 11.sp, fontStyle = FontStyle.Italic, fontFamily = PlusJakartaSans)
+            Text(
+                "Raw Sensors – Real data may vary",
+                color      = TrekColors.onSurfaceSub,
+                fontSize   = 11.sp,
+                fontStyle  = FontStyle.Italic,
+                fontFamily = PlusJakartaSans
+            )
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = TrekColors.divider, thickness = 1.dp)
             Spacer(Modifier.height(18.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                HeroMetricItem("GAIN",  "+${gainMeters.toInt()}m", TrekColors.gainGreen)
-                HeroMetricItem("LOSS",  "-${lossMeters.toInt()}m", TrekColors.lossRed)
-                // Speed: show "—" below noise floor instead of garbage near-zero values
+                HeroMetricItem("GAIN",  "+${gainMeters.toInt()}m",  TrekColors.gainGreen)
+                HeroMetricItem("LOSS",  "-${lossMeters.toInt()}m",  TrekColors.lossRed)
                 HeroMetricItem(
                     "SPEED",
                     if (speedKmh >= 0.5) "${String.format("%.1f", speedKmh)} km/h" else "—",
@@ -1456,11 +1676,22 @@ private fun AltitudeHeroCard(
 @Composable
 private fun HeroMetricItem(label: String, value: String, valueColor: Color) {
     Column {
-        Text(label, color = TrekColors.onSurfaceSub, fontSize = 10.sp,
-            letterSpacing = 1.5.sp, fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold)
+        Text(
+            label,
+            color         = TrekColors.onSurfaceSub,
+            fontSize      = 10.sp,
+            letterSpacing = 1.5.sp,
+            fontFamily    = PlusJakartaSans,
+            fontWeight    = FontWeight.SemiBold
+        )
         Spacer(Modifier.height(4.dp))
-        Text(value, color = valueColor, fontWeight = FontWeight.Bold,
-            fontSize = 18.sp, fontFamily = PlusJakartaSans)
+        Text(
+            value,
+            color      = valueColor,
+            fontWeight = FontWeight.Bold,
+            fontSize   = 18.sp,
+            fontFamily = PlusJakartaSans
+        )
     }
 }
 
@@ -1473,20 +1704,44 @@ fun MetricCard(
     unit     : String
 ) {
     Column(
-        modifier = modifier.shadow(2.dp, RoundedCornerShape(18.dp))
-            .clip(RoundedCornerShape(18.dp)).background(TrekColors.surface)
+        modifier = modifier
+            .shadow(2.dp, RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(TrekColors.surface)
             .padding(horizontal = 14.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Icon(icon, contentDescription = title, tint = TrekColors.accentGreen, modifier = Modifier.size(20.dp))
+        Icon(
+            icon,
+            contentDescription = title,
+            tint     = TrekColors.accentGreen,
+            modifier = Modifier.size(20.dp)
+        )
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, color = TrekColors.onSurface, fontWeight = FontWeight.Bold,
-                fontSize = 18.sp, fontFamily = PlusJakartaSans, lineHeight = 20.sp)
-            Text(unit, color = TrekColors.onSurfaceSub, fontSize = 11.sp,
-                fontFamily = PlusJakartaSans, modifier = Modifier.padding(bottom = 2.dp, start = 1.dp))
+            Text(
+                value,
+                color      = TrekColors.onSurface,
+                fontWeight = FontWeight.Bold,
+                fontSize   = 18.sp,
+                fontFamily = PlusJakartaSans,
+                lineHeight = 20.sp
+            )
+            Text(
+                unit,
+                color      = TrekColors.onSurfaceSub,
+                fontSize   = 11.sp,
+                fontFamily = PlusJakartaSans,
+                modifier   = Modifier.padding(bottom = 2.dp, start = 1.dp)
+            )
         }
-        Text(title, color = TrekColors.onSurfaceSub, fontSize = 9.sp,
-            letterSpacing = 1.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans)
+        Text(
+            title,
+            color         = TrekColors.onSurfaceSub,
+            fontSize      = 9.sp,
+            letterSpacing = 1.sp,
+            fontWeight    = FontWeight.SemiBold,
+            fontFamily    = PlusJakartaSans
+        )
     }
 }
 
@@ -1494,37 +1749,70 @@ fun MetricCard(
 @Composable
 fun ElevationProfileCard(currentAltitude: Double) {
     val maxAltitude = 8849.0
-    val zones = listOf(
-        Triple(AltitudeZone.NORMAL,          0.0,    2500.0),
-        Triple(AltitudeZone.ACCLIMATIZATION, 2500.0, 3500.0),
-        Triple(AltitudeZone.HIGH_RISK,       3500.0, 5000.0),
-        Triple(AltitudeZone.EXTREME,         5000.0, maxAltitude)
-    )
+    val zones = remember {
+        listOf(
+            Triple(AltitudeZone.NORMAL,          0.0,    2500.0),
+            Triple(AltitudeZone.ACCLIMATIZATION, 2500.0, 3500.0),
+            Triple(AltitudeZone.HIGH_RISK,       3500.0, 5000.0),
+            Triple(AltitudeZone.EXTREME,         5000.0, maxAltitude)
+        )
+    }
     Column(
-        modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp)).background(TrekColors.surface).padding(20.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(3.dp, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .background(TrekColors.surface)
+            .padding(20.dp)
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically) {
-            Text("ELEVATION PROFILE", color = TrekColors.onSurfaceSub, fontSize = 11.sp,
-                letterSpacing = 1.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans)
-            Icon(Icons.Outlined.Info, contentDescription = null,
-                tint = TrekColors.onSurfaceSub, modifier = Modifier.size(16.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment     = Alignment.CenterVertically
+        ) {
+            Text(
+                "ELEVATION PROFILE",
+                color         = TrekColors.onSurfaceSub,
+                fontSize      = 11.sp,
+                letterSpacing = 1.5.sp,
+                fontWeight    = FontWeight.SemiBold,
+                fontFamily    = PlusJakartaSans
+            )
+            Icon(
+                Icons.Outlined.Info,
+                contentDescription = null,
+                tint     = TrekColors.onSurfaceSub,
+                modifier = Modifier.size(16.dp)
+            )
         }
         Spacer(Modifier.height(14.dp))
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50.dp))) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(50.dp))
+        ) {
             val totalWidth     = maxWidth
             val markerFraction = (currentAltitude.coerceIn(0.0, maxAltitude) / maxAltitude).toFloat()
             Row(Modifier.fillMaxSize()) {
                 zones.forEach { (zone, from, to) ->
                     val fraction = ((to - from) / maxAltitude).toFloat()
-                    Box(Modifier.fillMaxHeight().width(totalWidth * fraction).background(zone.color))
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .width(totalWidth * fraction)
+                            .background(zone.color)
+                    )
                 }
             }
             Box(
-                Modifier.fillMaxHeight().padding(vertical = 1.dp).width(3.dp)
+                Modifier
+                    .fillMaxHeight()
+                    .padding(vertical = 1.dp)
+                    .width(3.dp)
                     .offset(x = (totalWidth * markerFraction).coerceIn(0.dp, totalWidth - 3.dp))
-                    .clip(RoundedCornerShape(50.dp)).background(Color.White)
+                    .clip(RoundedCornerShape(50.dp))
+                    .background(Color.White)
             )
         }
         Spacer(Modifier.height(6.dp))
@@ -1539,18 +1827,29 @@ fun ElevationProfileCard(currentAltitude: Double) {
         zones.forEach { (zone, from, to) ->
             val isCurrent = currentAltitude in from..to
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
                     .background(if (isCurrent) zone.color.copy(alpha = 0.07f) else Color.Transparent)
                     .padding(vertical = 7.dp, horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(Modifier.size(9.dp).clip(CircleShape).background(zone.color))
                 Spacer(Modifier.width(10.dp))
-                Text(zone.label, color = if (isCurrent) zone.color else TrekColors.onSurface,
-                    fontSize = 13.sp, modifier = Modifier.weight(1f), fontFamily = PlusJakartaSans,
-                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal)
-                Text("${from.toInt()} – ${to.toInt()} m", color = TrekColors.onSurfaceSub,
-                    fontSize = 12.sp, fontFamily = PlusJakartaSans)
+                Text(
+                    zone.label,
+                    color      = if (isCurrent) zone.color else TrekColors.onSurface,
+                    fontSize   = 13.sp,
+                    modifier   = Modifier.weight(1f),
+                    fontFamily = PlusJakartaSans,
+                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
+                )
+                Text(
+                    "${from.toInt()} – ${to.toInt()} m",
+                    color      = TrekColors.onSurfaceSub,
+                    fontSize   = 12.sp,
+                    fontFamily = PlusJakartaSans
+                )
             }
         }
     }
@@ -1558,58 +1857,128 @@ fun ElevationProfileCard(currentAltitude: Double) {
 
 @SuppressLint("DefaultLocale")
 @Composable
-private fun CoordinatesCard(latitude: Double, longitude: Double) {
+private fun CoordinatesCard(
+    latitude  : Double,
+    longitude : Double,
+    onCopied  : () -> Unit = {}
+) {
     val hasCoords        = latitude != 0.0 && longitude != 0.0
     val clipboardManager = LocalClipboardManager.current
+
     Row(
-        modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp)).background(TrekColors.surface)
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(3.dp, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .background(TrekColors.surface)
             .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Box(modifier = Modifier.size(42.dp).clip(CircleShape).background(TrekColors.accentLight),
-            contentAlignment = Alignment.Center) {
-            Icon(Icons.Outlined.GpsFixed, contentDescription = "GPS",
-                tint = TrekColors.accent, modifier = Modifier.size(22.dp))
+        Box(
+            modifier         = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(TrekColors.accentLight),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Outlined.GpsFixed,
+                contentDescription = "GPS",
+                tint     = TrekColors.accent,
+                modifier = Modifier.size(22.dp)
+            )
         }
         Column(Modifier.weight(1f)) {
-            Text("LIVE COORDINATES", color = TrekColors.onSurfaceSub, fontSize = 10.sp,
-                letterSpacing = 1.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans)
+            Text(
+                "LIVE COORDINATES",
+                color         = TrekColors.onSurfaceSub,
+                fontSize      = 10.sp,
+                letterSpacing = 1.sp,
+                fontWeight    = FontWeight.SemiBold,
+                fontFamily    = PlusJakartaSans
+            )
             Spacer(Modifier.height(2.dp))
             Text(
                 if (hasCoords)
                     "${"%.4f".format(latitude)}° ${if (latitude >= 0) "N" else "S"},  " +
                             "${"%.4f".format(longitude)}° ${if (longitude >= 0) "E" else "W"}"
-                else "Acquiring GPS fix…",
+                else
+                    "Acquiring GPS fix…",
                 color      = if (hasCoords) TrekColors.onSurface else TrekColors.onSurfaceSub,
                 fontWeight = if (hasCoords) FontWeight.SemiBold else FontWeight.Normal,
-                fontSize   = 14.sp, fontFamily = PlusJakartaSans
+                fontSize   = 14.sp,
+                fontFamily = PlusJakartaSans
             )
         }
-        Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy coordinates",
+        Icon(
+            Icons.Outlined.ContentCopy,
+            contentDescription = "Copy coordinates",
             tint     = if (hasCoords) TrekColors.onSurfaceSub else TrekColors.divider,
-            modifier = Modifier.size(18.dp).clickable(
-                enabled = hasCoords,
-                interactionSource = remember { MutableInteractionSource() },
-                indication        = null
-            ) {
-                clipboardManager.setText(AnnotatedString("${"%.4f".format(latitude)}, ${"%.4f".format(longitude)}"))
-            }
+            modifier = Modifier
+                .size(18.dp)
+                .clickable(
+                    enabled           = hasCoords,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication        = null
+                ) {
+                    clipboardManager.setText(
+                        AnnotatedString(
+                            "${"%.4f".format(latitude)}, ${"%.4f".format(longitude)}"
+                        )
+                    )
+                    onCopied()
+                }
+        )
+    }
+}
+
+// ─── Copied toast ──────────────────────────────────────────────────────────────
+
+@Composable
+private fun CopiedToast() {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50.dp))
+            .background(Color(0xFF4CAF50))
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            Icons.Outlined.CheckCircle,
+            contentDescription = null,
+            tint     = Color.White,
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            "Coordinates copied",
+            color      = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize   = 14.sp,
+            fontFamily = PlusJakartaSans
         )
     }
 }
 
 // ─── Previews ──────────────────────────────────────────────────────────────────
+
 @Preview(showBackground = true, backgroundColor = 0xFFF2F3F6, widthDp = 390, heightDp = 900)
 @Composable
 fun TrekModeActivePreview() {
     TrekModeContent(
-        trekModeEnabled = true,  altitude = 3440.0,
-        altitudeZone    = AltitudeZone.ACCLIMATIZATION,
-        gainMeters      = 610.0, lossMeters = 120.0, speedKmh = 3.0,
-        distanceKm      = 12.4,  accuracy   = 3.0f,  latitude = 27.8065,
-        longitude       = 86.7140, ascentRateM = 220.0, inBatterySaver = false,
+        isTracking     = true,
+        altitude       = 3440.0,
+        altitudeZone   = AltitudeZone.ACCLIMATIZATION,
+        gainMeters     = 610.0,
+        lossMeters     = 120.0,
+        speedKmh       = 3.0,
+        distanceKm     = 12.4,
+        accuracy       = 3.0f,
+        latitude       = 27.8065,
+        longitude      = 86.7140,
+        ascentRateM    = 220.0,
+        inBatterySaver = false,
         onToggleTrekMode = {}
     )
 }
@@ -1618,11 +1987,18 @@ fun TrekModeActivePreview() {
 @Composable
 fun TrekModeBatterySaverPreview() {
     TrekModeContent(
-        trekModeEnabled = true,  altitude = 4200.0,
-        altitudeZone    = AltitudeZone.HIGH_RISK,
-        gainMeters      = 900.0, lossMeters = 50.0, speedKmh = 0.3,
-        distanceKm      = 8.1,   accuracy   = 12f,  latitude = 27.988,
-        longitude       = 86.925, ascentRateM = 0.0, inBatterySaver = true,
+        isTracking     = true,
+        altitude       = 4200.0,
+        altitudeZone   = AltitudeZone.HIGH_RISK,
+        gainMeters     = 900.0,
+        lossMeters     = 50.0,
+        speedKmh       = 0.3,
+        distanceKm     = 8.1,
+        accuracy       = 12f,
+        latitude       = 27.988,
+        longitude      = 86.925,
+        ascentRateM    = 0.0,
+        inBatterySaver = true,
         onToggleTrekMode = {}
     )
 }
@@ -1631,10 +2007,16 @@ fun TrekModeBatterySaverPreview() {
 @Composable
 fun TrekModeInactivePreview() {
     TrekModeContent(
-        trekModeEnabled = false, altitude = 0.0,
-        altitudeZone    = AltitudeZone.NORMAL,
-        gainMeters      = 0.0, lossMeters = 0.0, speedKmh = 0.0,
-        distanceKm      = 0.0, accuracy   = 0f,  latitude = 0.0,
-        longitude       = 0.0, onToggleTrekMode = {}
+        isTracking     = false,
+        altitude       = 0.0,
+        altitudeZone   = AltitudeZone.NORMAL,
+        gainMeters     = 0.0,
+        lossMeters     = 0.0,
+        speedKmh       = 0.0,
+        distanceKm     = 0.0,
+        accuracy       = 0f,
+        latitude       = 0.0,
+        longitude      = 0.0,
+        onToggleTrekMode = {}
     )
 }

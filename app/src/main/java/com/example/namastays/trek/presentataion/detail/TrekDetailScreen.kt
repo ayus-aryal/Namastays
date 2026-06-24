@@ -38,6 +38,7 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.namastays.R
+import com.example.namastays.api.ApiClient
 import com.example.namastays.repository.TrekRepository
 import com.example.namastays.screens.PlusJakartaSans
 import com.example.namastays.trek.TrekDatabase
@@ -89,6 +90,7 @@ fun TrekDetailScreen(
         factory = TrekDetailViewModel.Factory(
             trekId     = trekId,
             repository = TrekRepository(
+                api           = ApiClient.trekApi,
                 cacheDao      = db.trekCacheDao(),
                 itineraryDao  = db.trekItineraryDao(),
                 highlightDao  = db.trekHighlightDao(),

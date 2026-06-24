@@ -7,6 +7,6 @@ import com.example.namastays.screens.MainScreen
 
 @RequiresApi(Build.VERSION_CODES.Q)
 @Composable
-fun AppNavGraph() {
-    MainScreen()
+fun AppNavGraph(startDestination: String) {
+    MainScreen(startDestination = startDestination)
 }

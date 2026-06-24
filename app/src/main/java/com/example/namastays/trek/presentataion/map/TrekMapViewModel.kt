@@ -10,6 +10,7 @@ import android.hardware.SensorManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.example.namastays.api.ApiClient
 import com.example.namastays.repository.TrekRepository
 import com.example.namastays.trek.TrekDatabase
 import com.example.namastays.trek.domain.CustomMarker
@@ -82,6 +83,7 @@ class TrekMapViewModel(
     private val sessionDao  = db.navigationSessionDao()
     private val downloadDao = db.downloadedTrekDao()
     private val repository  = TrekRepository(
+        api           = ApiClient.trekApi,
         cacheDao      = db.trekCacheDao(),
         itineraryDao  = db.trekItineraryDao(),
         highlightDao  = db.trekHighlightDao(),

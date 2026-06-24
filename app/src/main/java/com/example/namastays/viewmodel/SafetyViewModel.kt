@@ -5,91 +5,81 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.example.namastays.data.ContactRepository
 import com.example.namastays.data.EmergencyContactEntity
 import com.example.namastays.data.SafetyDatabase
 import com.example.namastays.data.SosForegroundService
+import com.example.namastays.data.SosManager
 import com.example.namastays.data.SosPermissionHelper
 import com.example.namastays.data.SosPermissionStatus
 import com.example.namastays.data.SosState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class SafetyViewModel(
     application: Application,
     private val savedStateHandle: SavedStateHandle,
 ) : AndroidViewModel(application) {
 
-    private val context: Context get() = getApplication<Application>().applicationContext
+    // FIX V2 — cached once; avoids re-invoking getApplication() on every access.
+    private val appContext: Context = application.applicationContext
 
-    // ── DB ────────────────────────────────────────────────────────────────────
+    // FIX V1 — route through ContactRepository instead of accessing the DAO
+    // directly. ContactRepository is the declared owner of contact data access;
+    // bypassing it made the repository dead code and put data logic in the VM.
+    private val contactRepository = ContactRepository(
+        SafetyDatabase.getInstance(appContext).contactDao()
+    )
 
-    private val dao = SafetyDatabase.getInstance(context).contactDao()
+    // ── Contacts ──────────────────────────────────────────────────────────────
 
-    val contacts: StateFlow<List<EmergencyContactEntity>> = dao
+    val contacts: StateFlow<List<EmergencyContactEntity>> = contactRepository
         .getAllContacts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun addContact(name: String, phone: String, relation: String) {
         viewModelScope.launch {
-            dao.insertContact(
+            contactRepository.addContact(
                 EmergencyContactEntity(name = name, phone = phone, relation = relation)
             )
         }
     }
 
     fun deleteContact(contact: EmergencyContactEntity) {
-        viewModelScope.launch { dao.deleteContact(contact) }
+        viewModelScope.launch { contactRepository.deleteContact(contact) }
     }
 
-    // ── SOS state (from service) ──────────────────────────────────────────────
-    // The service owns the ground truth. ViewModel just exposes it.
+    // ── SOS state ─────────────────────────────────────────────────────────────
 
     val sosState: StateFlow<SosState> = SosForegroundService.sosState
 
     // ── Permission status ─────────────────────────────────────────────────────
 
-    private val _permissionStatus = MutableStateFlow(SosPermissionHelper.getStatus(context))
+    private val _permissionStatus = MutableStateFlow(SosPermissionHelper.getStatus(appContext))
     val permissionStatus: StateFlow<SosPermissionStatus> = _permissionStatus.asStateFlow()
 
-    /**
-     * Re-checks permission status. Called on screen resume.
-     *
-     * PackageManager queries can touch binder on some OEMs and on low-end
-     * devices after a cold boot — run on IO to keep the UI thread clear
-     * during the resume transition (exactly when jank is most visible).
-     */
     fun refreshPermissions() {
         viewModelScope.launch(Dispatchers.IO) {
-            val status = SosPermissionHelper.getStatus(context)
-            _permissionStatus.value = status
+            // FIX V2 — appContext already cached; no repeated getApplication() call.
+            _permissionStatus.value = SosPermissionHelper.getStatus(appContext)
         }
     }
 
     // ── SOS actions ───────────────────────────────────────────────────────────
 
     fun startSos() {
-        val currentContacts = contacts.value
-        com.example.namastays.data.SosManager.setPendingContacts(currentContacts)
-        SosForegroundService.start(context)
+        SosManager.setPendingContacts(contacts.value)
+        SosForegroundService.start(appContext)
     }
 
-    fun cancelSos() {
-        SosForegroundService.cancel(context)
-    }
-
-    fun stopSos() {
-        SosForegroundService.stop(context)
-    }
-
-    fun resetSosState() {
-        SosForegroundService.resetState()
-    }
+    fun cancelSos() { SosForegroundService.cancel(appContext) }
+    fun stopSos()   { SosForegroundService.stop(appContext) }
+    fun resetSosState() { SosForegroundService.resetState() }
 
     override fun onCleared() {
         super.onCleared()
-        // Intentionally not stopping the service here — it must outlive
-        // the ViewModel to keep SOS active during config changes.
+        // Intentionally not stopping the service — it must outlive the ViewModel
+        // to keep SOS active during config changes.
     }
 }

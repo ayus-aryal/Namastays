@@ -45,6 +45,7 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
+import com.example.namastays.api.ApiClient
 import com.example.namastays.repository.NetworkResult
 import com.example.namastays.repository.TrekRepository
 import com.example.namastays.screens.PlusJakartaSans
@@ -81,6 +82,7 @@ fun TrekListScreen(navController: NavController) {
     val viewModel: TreksViewModel = viewModel(
         factory = TreksViewModel.Factory(
             repository = TrekRepository(
+                api           = ApiClient.trekApi,
                 cacheDao      = db.trekCacheDao(),
                 itineraryDao  = db.trekItineraryDao(),
                 highlightDao  = db.trekHighlightDao(),
@@ -881,86 +883,3 @@ fun difficultyColor(difficulty: String): Color = when (difficulty.lowercase()) {
 }
 
 fun getDifficultyColor(difficulty: String): Color = difficultyColor(difficulty)
-
-// ── Preview ───────────────────────────────────────────────────────────────────
-
-@Preview(showBackground = true, widthDp = 390, heightDp = 844)
-@Composable
-private fun TrekListScreenPreview() {
-    val sampleTreks = listOf(
-        TrekItem(
-            id           = "1",
-            name         = "Poon Hill Sunrise Trek",
-            region       = "Annapurna Region",
-            difficulty   = "Easy",
-            durationDays = 4,
-            maxElevation = 3210,
-            distanceKm   = 32,
-            description  = "A classic short trek with stunning panoramic views of the Annapurna and Dhaulagiri ranges.",
-            fileSizeMb   = 45,
-            thumbnailUrl = null
-        ),
-        TrekItem(
-            id           = "2",
-            name         = "Manaslu Circuit Trek",
-            region       = "Gorkha Region",
-            difficulty   = "Moderate",
-            durationDays = 14,
-            maxElevation = 5106,
-            distanceKm   = 177,
-            description  = "A remote and spectacular circuit around the world's eighth highest mountain.",
-            fileSizeMb   = 120,
-            thumbnailUrl = null
-        ),
-        TrekItem(
-            id           = "3",
-            name         = "Upper Mustang Trail",
-            region       = "Mustang Region",
-            difficulty   = "Hard",
-            durationDays = 12,
-            maxElevation = 3840,
-            distanceKm   = 125,
-            description  = "Journey into the forbidden kingdom — ancient caves, walled villages, raw plateau.",
-            fileSizeMb   = 98,
-            thumbnailUrl = null
-        )
-    )
-
-    MaterialTheme {
-        Surface(color = ListPalette.Background) {
-            LazyColumn(
-                modifier       = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                item {
-                    LazyRow(
-                        contentPadding        = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier              = Modifier.padding(vertical = 12.dp)
-                    ) {
-                        items(listOf("All", "Easy", "Moderate", "Hard"), key = { it }) { filter ->
-                            FilterChipItem(
-                                label    = filter,
-                                selected = filter == "All",
-                                onClick  = {}
-                            )
-                        }
-                    }
-                }
-                items(sampleTreks, key = { it.id }) { trek ->
-                    TrekCard(
-                        trek         = trek,
-                        isDownloaded = trek.id == "1",
-                        onClick      = {},
-                        modifier     = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-                item {
-                    TrekCardSkeleton(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            }
-        }
-    }
-}

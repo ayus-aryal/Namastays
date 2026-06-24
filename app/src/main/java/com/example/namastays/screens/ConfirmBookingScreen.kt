@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -40,6 +41,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.namastays.NamastaysApp
 import com.example.namastays.dto.PropertyDetailsResponse
 import com.example.namastays.dto.RoomResponse
 import com.example.namastays.viewmodel.PropertyDetailsUiState
@@ -961,8 +963,10 @@ fun ConfirmBookingScreen(
     propertyId: String,
     roomId: String,
     navController: NavController,
-    viewModel: PropertyDetailsViewModel = viewModel()
-) {
+    viewModel: PropertyDetailsViewModel = run {
+        val app = LocalContext.current.applicationContext as NamastaysApp
+        viewModel(factory = PropertyDetailsViewModel.Factory(app.deps.propertyRepository))
+    }) {
     // ── Fetch ─────────────────────────────────────────────────────────────────
     LaunchedEffect(propertyId) { viewModel.fetchPropertyDetails(propertyId) }
 

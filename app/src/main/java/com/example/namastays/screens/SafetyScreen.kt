@@ -49,15 +49,15 @@ private val ShIconBg   = Color(0xFFF3F4F6)
 private val ShIconTint = Color(0xFF374151)
 
 object SafetyRoutes {
-    const val HOME         = "safety_home"
-    const val SOS          = "sos"
-    const val AMS          = "ams_checker"
-    const val LAKE_LOUISE  = "lake_louise"
-    const val CONTACTS     = "emergency_contacts"
-    const val COMPASS      = "compass"
-    const val TORCH        = "torch"
-    const val ADD_CONTACT  = "add_contact"
-    const val LOCAL_BODIES = "local_bodies"
+    const val HOME         = "safety"
+    const val SOS          = "safety/sos"
+    const val AMS          = "safety/ams"          // not registered yet either — see below
+    const val LAKE_LOUISE  = "safety/ams"          // not registered yet — see below
+    const val CONTACTS     = "safety/contacts"
+    const val COMPASS      = "safety/compass"
+    const val TORCH        = "safety/torch"
+    const val ADD_CONTACT  = "safety/add"
+    const val LOCAL_BODIES = "safety/local_bodies"         // not registered yet — see below
 }
 
 

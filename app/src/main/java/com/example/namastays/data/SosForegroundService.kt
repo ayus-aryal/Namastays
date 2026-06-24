@@ -20,7 +20,10 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class SosForegroundService : Service() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // FIX F1 — use Dispatchers.IO as the base; countdown only uses delay()
+    // which suspends without blocking, so IO is fine. Eliminates the risk of
+    // any future suspend call in this scope accidentally blocking the main thread.
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var countdownJob: Job? = null
 
     companion object {
@@ -33,7 +36,6 @@ class SosForegroundService : Service() {
         const val ACTION_CANCEL = "com.example.namastays.SOS_CANCEL"
         const val ACTION_STOP   = "com.example.namastays.SOS_STOP"
 
-        // Shared state — survives as long as the service process is alive
         private val _sosState = MutableStateFlow<SosState>(SosState.Idle)
         val sosState: StateFlow<SosState> = _sosState.asStateFlow()
 
@@ -50,23 +52,17 @@ class SosForegroundService : Service() {
 
         fun cancel(context: Context) {
             context.startService(
-                Intent(context, SosForegroundService::class.java).apply {
-                    action = ACTION_CANCEL
-                }
+                Intent(context, SosForegroundService::class.java).apply { action = ACTION_CANCEL }
             )
         }
 
         fun stop(context: Context) {
             context.startService(
-                Intent(context, SosForegroundService::class.java).apply {
-                    action = ACTION_STOP
-                }
+                Intent(context, SosForegroundService::class.java).apply { action = ACTION_STOP }
             )
         }
 
-        fun resetState() {
-            _sosState.value = SosState.Idle
-        }
+        fun resetState() { _sosState.value = SosState.Idle }
     }
 
     override fun onCreate() {
@@ -75,12 +71,22 @@ class SosForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        // FIX F2 — if the service is restarted by START_STICKY after a process
+        // kill, intent is null. Reset state to Idle so the UI doesn't show an
+        // SOS as active when the service process was killed mid-SOS.
+        if (intent == null) {
+            Log.w(TAG, "Service restarted by system (null intent) — resetting state to Idle")
+            _sosState.value = SosState.Idle
+            stopSelf()
+            return START_NOT_STICKY   // Don't restart again with null intent.
+        }
+
+        when (intent.action) {
             ACTION_START  -> handleStart()
             ACTION_CANCEL -> handleCancel()
             ACTION_STOP   -> handleStop()
         }
-        return START_STICKY // Restart if killed
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -95,21 +101,23 @@ class SosForegroundService : Service() {
 
     private fun handleStart() {
         if (_sosState.value is SosState.Active || _sosState.value is SosState.Counting) return
-
         startForeground(NOTIF_ID, buildNotification("SOS countdown starting…"))
         startCountdown()
     }
 
     private fun handleCancel() {
-        countdownJob?.cancel()
+        // FIX F3 — set state BEFORE cancelling the job so the UI always sees
+        // Idle before the coroutine has a chance to emit another Counting value.
         _sosState.value = SosState.Idle
+        countdownJob?.cancel()
+        SosManager.cancelSos(applicationContext)
         updateNotification("SOS cancelled")
         stopSelf()
     }
 
     private fun handleStop() {
-        countdownJob?.cancel()
         _sosState.value = SosState.Idle
+        countdownJob?.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -129,7 +137,6 @@ class SosForegroundService : Service() {
                 if (remaining > 0) _sosState.value = SosState.Counting(remaining)
             }
 
-            // Countdown finished — fire SOS
             _sosState.value = SosState.Active(sentAt = System.currentTimeMillis())
             updateNotification("🆘 SOS Active — help is being notified")
             fireSos()
@@ -139,27 +146,24 @@ class SosForegroundService : Service() {
     // ── Fire SOS ──────────────────────────────────────────────────────────────
 
     private suspend fun fireSos() {
-        withContext(Dispatchers.IO) {
-            try {
-                // SosManager handles both SMS AND BLE internally — don't call BleManager separately
-                SosManager.sendSosMessages(
-                    context  = applicationContext,
-                    contacts = emptyList(), // pendingContacts already set via setPendingContacts()
-                    onResult = { success, message ->
-                        Log.d(TAG, "SOS result: success=$success, message=$message")
-                        if (!success) {
-                            _sosState.value = SosState.Failed(message)
-                        }
+        // Already on Dispatchers.IO (serviceScope base dispatcher).
+        try {
+            SosManager.sendSosMessages(
+                context  = applicationContext,
+                contacts = emptyList(),
+                onResult = { success, message ->
+                    Log.d(TAG, "SOS result: success=$success, message=$message")
+                    // FIX S6 — onResult(false, ...) now correctly means the
+                    // background send failed and manual action is needed.
+                    // We surface this as Failed rather than silently staying Active.
+                    if (!success) {
+                        _sosState.value = SosState.Failed(message)
                     }
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "SOS fire failed: ${e.message}")
-                _sosState.value = SosState.Failed(e.message ?: "Unknown error")
-            }
-
-            // ← DELETE the separate BleManager.startAdvertising() block entirely
-            // SosManager.sendSosMessages already calls BleManager.startAdvertising()
-            // with the correct context + coordinates from the location fetch
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "SOS fire failed: ${e.message}")
+            _sosState.value = SosState.Failed(e.message ?: "Unknown error")
         }
     }
 
@@ -175,32 +179,27 @@ class SosForegroundService : Service() {
                 description = "SOS emergency alerts"
                 setShowBadge(true)
             }
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
     private fun buildNotification(text: String): Notification {
         val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
+            this, 0,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val cancelIntent = PendingIntent.getService(
-            this,
-            1,
+            this, 1,
             Intent(this, SosForegroundService::class.java).apply { action = ACTION_CANCEL },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SOS Emergency")
             .setContentText(text)
-            .setSmallIcon(R.drawable.ic_launcher_foreground) // ensure this drawable exists
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(openAppIntent)
             .addAction(0, "Cancel", cancelIntent)
             .setOngoing(true)
@@ -210,7 +209,6 @@ class SosForegroundService : Service() {
     }
 
     private fun updateNotification(text: String) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIF_ID, buildNotification(text))
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
     }
 }

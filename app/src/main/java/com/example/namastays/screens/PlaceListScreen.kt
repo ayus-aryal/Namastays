@@ -2,6 +2,9 @@
 
 package com.example.namastays.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -39,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.namastays.NamastaysApp
 import com.example.namastays.data.CityPreferences
 import com.example.namastays.dto.CityPlacesResponse
 import com.example.namastays.dto.PlaceResponse
@@ -46,7 +51,8 @@ import com.example.namastays.viewmodel.PlaceUiState
 import com.example.namastays.viewmodel.PlaceViewModel
 import kotlinx.coroutines.launch
 
-private val ActivePill = Color(0xFF4A80F0)
+// Brand accent — indigo, matching the rest of NamaStays' design system.
+private val ActivePill = Color(0xFF6366F1)
 private val PillText   = Color(0xFF4A4A4A)
 
 val categories = listOf("All", "Stays", "Food", "Viewpoints", "Adventure", "Parks", "Nightlife")
@@ -55,7 +61,10 @@ val categories = listOf("All", "Stays", "Food", "Viewpoints", "Adventure", "Park
 fun PlaceListScreen(
     navController: NavController,
     citySlug: String,
-    viewModel: PlaceViewModel = viewModel()
+    viewModel: PlaceViewModel = run {
+        val app = LocalContext.current.applicationContext as NamastaysApp
+        viewModel(factory = PlaceViewModel.Factory(app.deps.placeRepository))
+    }
 ) {
     val context         = LocalContext.current
     val cityPreferences = remember { CityPreferences(context) }
@@ -169,7 +178,7 @@ fun PlaceListScreen(
                             Icon(
                                 imageVector        = Icons.Outlined.SwapHoriz,
                                 contentDescription = "Change city",
-                                tint               = Color(0xFF4A80F0),
+                                tint               = ActivePill,
                                 modifier           = Modifier.size(15.dp)
                             )
                             Text(
@@ -177,7 +186,7 @@ fun PlaceListScreen(
                                 fontFamily = PlusJakartaSans,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize   = 12.sp,
-                                color      = Color(0xFF4A80F0)
+                                color      = ActivePill
                             )
                         }
                     }
@@ -222,16 +231,42 @@ fun PlaceListScreen(
                     items(categories) { category ->
                         val isSelected = selectedCategory == category ||
                                 (selectedCategory == null && category == "All")
+
+                        // Animated background — fades between white and the indigo
+                        // fill instead of snapping, so selection reads as a
+                        // deliberate state change rather than a UI glitch.
+                        val backgroundColor by animateColorAsState(
+                            targetValue = if (isSelected) ActivePill else Color.White,
+                            label       = "pillBackground"
+                        )
+                        val textColor by animateColorAsState(
+                            targetValue = if (isSelected) Color.White else PillText,
+                            label       = "pillTextColor"
+                        )
+                        // Tiny scale pop on selection — gives tactile feedback
+                        // without being distracting.
+                        val scale by animateFloatAsState(
+                            targetValue = if (isSelected) 1.04f else 1f,
+                            animationSpec = spring(dampingRatio = 0.55f),
+                            label = "pillScale"
+                        )
+
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier         = Modifier
+                                .graphicsLayer {
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
+                                .clip(RoundedCornerShape(50))
                                 .background(
-                                    color  = if (isSelected) ActivePill else Color.White,
-                                    shape  = RoundedCornerShape(50)
+                                    color = backgroundColor,
+                                    shape = RoundedCornerShape(50)
                                 )
-                                .then(
-                                    if (!isSelected) Modifier.border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(50))
-                                    else Modifier
+                                .border(
+                                    width = if (isSelected) 0.dp else 1.dp,
+                                    color = if (isSelected) Color.Transparent else Color(0xFFE0E0E0),
+                                    shape = RoundedCornerShape(50)
                                 )
                                 .clickable {
                                     val filter = if (category == "All") null else category
@@ -244,7 +279,7 @@ fun PlaceListScreen(
                                 fontFamily = PlusJakartaSans,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                 fontSize   = 13.sp,
-                                color      = if (isSelected) Color.White else PillText
+                                color      = textColor
                             )
                         }
                     }
@@ -351,7 +386,7 @@ fun PlaceCard(
                             fontFamily = PlusJakartaSans,
                             fontWeight = FontWeight.SemiBold,
                             fontSize   = 11.sp,
-                            color      = Color(0xFF4A80F0)
+                            color      = ActivePill
                         )
                     }
                 }
@@ -379,7 +414,7 @@ fun PlaceCard(
             Row(
                 modifier          = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF4A80F0))
+                    .background(ActivePill)
                     .padding(horizontal = 12.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)

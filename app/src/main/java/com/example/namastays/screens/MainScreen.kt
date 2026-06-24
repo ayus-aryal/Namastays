@@ -29,18 +29,21 @@ import com.example.namastays.viewmodel.TrekViewModelFactory
 // Routes where the bottom nav must be hidden.
 // Top-level set — allocated once, not on every recomposition.
 private val routesWithoutBottomBar = setOf(
+    "login",
     "packing_checklist",
     "cities",
     "safety/sos",
     "safety/contacts",
     "safety/add",
     "safety/compass",
-    "safety/torch"
+    "safety/torch",
+    "safety/ams",
+    "safety/local_bodies"
 )
 
 @RequiresApi(Build.VERSION_CODES.Q)
 @Composable
-fun MainScreen() {
+fun MainScreen(startDestination: String) {
 
     val navController = rememberNavController()
     val application   = LocalContext.current.applicationContext as Application
@@ -56,14 +59,39 @@ fun MainScreen() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute   = backStackEntry?.destination?.route
 
+    // Resolves the CURRENT route to its parent tab, not just exact top-level matches.
+    // This fixes the bug where nested/detail routes (e.g. "places/{citySlug}",
+    // "search_results/{city}") fell through to `else -> 0` and incorrectly
+    // highlighted Home in the bottom bar regardless of which flow they actually
+    // belong to.
+    //
+    // Flow mapping (per confirmed app structure):
+    //   Home    -> SearchResultsScreen -> PropertyDetailsScreen -> ConfirmBookingScreen
+    //   Explore -> CityListScreen      -> PlaceListScreen       -> PlaceDetailScreen
     val selectedTab = remember(currentRoute) {
-        when (currentRoute) {
-            "home"      -> 0
-            "explore"   -> 1
-            "maps"      -> 2
-            "trek_mode" -> 3
-            "safety"    -> 4
-            else        -> 0
+        when {
+            currentRoute == null -> 0
+
+            currentRoute == "home"
+                    || currentRoute.startsWith("search_results/")
+                    || currentRoute.startsWith("property_details/")
+                    || currentRoute.startsWith("confirm_booking/") -> 0
+
+            currentRoute == "explore"
+                    || currentRoute == "cities"
+                    || currentRoute.startsWith("places/")
+                    || currentRoute.startsWith("place_detail/") -> 1
+
+            currentRoute == "maps"
+                    || currentRoute.startsWith("trek_detail/")
+                    || currentRoute.startsWith("trek_map/") -> 2
+
+            currentRoute == "trek_mode" -> 3
+
+            currentRoute == "safety"
+                    || currentRoute.startsWith("safety/") -> 4
+
+            else -> 0
         }
     }
 
@@ -102,34 +130,36 @@ fun MainScreen() {
         }
     ) { padding ->
 
-        // When the bottom bar is hidden, Scaffold still reserves the same
-        // bottom system-bar inset in `padding` even though nothing is drawn
-        // there anymore. Strip just the bottom component in that case —
-        // screens with their own sticky bottom content (ConfirmBookingScreen,
-        // PropertyDetailsScreen) consume the nav-bar inset themselves via
-        // navigationBarsPadding() on that sticky element.
-        val contentPadding = if (hideBottomBar) {
-            PaddingValues(
+        val contentPadding = when {
+            // Login draws its own full-bleed background behind the status bar
+            // and handles its own insets (statusBarsPadding/navigationBarsPadding)
+            // internally — it must not inherit ANY Scaffold padding.
+            currentRoute == "login" -> PaddingValues(0.dp)
+
+            hideBottomBar -> PaddingValues(
                 top    = padding.calculateTopPadding(),
                 start  = padding.calculateStartPadding(LocalLayoutDirection.current),
                 end    = padding.calculateEndPadding(LocalLayoutDirection.current),
                 bottom = 0.dp
             )
-        } else {
-            padding
+
+            else -> padding
         }
 
-        // No enter/exit/pop transitions specified — navigation is instant,
-        // with no animation in either direction.
         NavHost(
             navController    = navController,
-            startDestination = "home",
+            startDestination = startDestination,
             modifier          = Modifier.padding(contentPadding)
         ) {
+            addAuthFlow(navController)
             addMainTabs(navController, trekViewModel)
             addDetailFlows(navController, packingViewModel)
         }
     }
+}
+
+private fun NavGraphBuilder.addAuthFlow(navController: NavController) {
+    composable("login") { com.example.namastays.screens.LoginScreen(navController) }
 }
 
 @RequiresApi(Build.VERSION_CODES.Q)
@@ -255,4 +285,6 @@ private fun NavGraphBuilder.addDetailFlows(
     composable("safety/add")      { AddContactScreen(navController) }
     composable("safety/compass")  { CompassScreen(navController) }
     composable("safety/torch")    { TorchScreen(navController) }
+    composable("safety/ams")          { LakeLouiseScreen(navController) }
+    composable("safety/local_bodies") { EmergencySOSScreen(navController) }
 }

@@ -11,240 +11,223 @@ import com.example.namastays.screens.AltitudeZone
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
 
 /**
- * Central engine for Trek Mode. Owned as a singleton by NamastaysApp.
+ * Threading model (post-fix):
  *
- * Responsibilities
- * ────────────────
- * 1. Drive [GpsDataSource] + [BarometerSource] + [KalmanFilter] (unchanged).
- * 2. ACCURACY GATING — every GPS fix is rejected if accuracy > [ACCURACY_THRESHOLD_M].
- * 3. SPEED — 5-point median over recent accurate fixes, zeroed below noise floor.
- *    Raw location.speed on Android is instantaneous and meaningless below ~1 km/h.
- * 4. DISTANCE — Haversine only when accuracy ≤ threshold AND displacement ≥ [MIN_DISPLACEMENT_M].
- *    Eliminates the phantom distance that accumulates while standing still.
- * 5. ELEVATION — Kalman-filtered fused altitude; gain/loss gated to ≥ [MIN_ELEVATION_DELTA_M].
- * 6. BATTERY SAVER — after [BATTERY_SAVER_DEBOUNCE_MS] below [BATTERY_SAVER_SPEED_KMH],
- *    switches GPS to slow polling. Hysteretic exit to prevent thrashing.
- * 7. SESSION LIFECYCLE — opens a TrekSession row on start(), closes it with final
- *    stats on stop(). Orphaned sessions from crashes are closed on next start().
- * 8. ELEVATION POINTS — writes one DB row per [ELEVATION_RECORD_INTERVAL_MS] for
- *    the sparkline, only when accuracy is within threshold.
- * 9. ASCENT RATE — sliding 30-minute window of (altitude, time) pairs → m/hr.
+ * All mutable accumulator state is confined to [engineDispatcher], a
+ * single-threaded coroutine dispatcher. Every GPS callback immediately
+ * dispatches work onto this dispatcher instead of mutating state on the
+ * FLP binder thread. This eliminates:
  *
- * ── Resource lifecycle note (fixed) ─────────────────────────────────────────
- * Previously, `engineScope` (a CoroutineScope wrapping Dispatchers.IO) was
- * only cancelled inside `invokeOnCompletion` of the session-close launch —
- * meaning if stop() was called twice in quick succession, the app was killed
- * mid-close, or start()/stop()/start() happened rapidly, the old scope's Job
- * (and anything it was holding, e.g. an in-flight Room transaction) could
- * become unreachable without ever being explicitly cancelled. The GC would
- * eventually finalize whatever Closeable was underneath, surfacing as a
- * generic "resource failed to call close" warning completely disconnected
- * from this file — which is exactly the bug pattern that was hard to trace.
+ *   E1 — @Volatile does not protect compound read-modify-write operations.
+ *   E2 — ArrayDeque mutations racing between two concurrent FLP callbacks.
  *
- * Fixed by: cancelling engineScope synchronously and immediately in stop(),
- * and doing the final session-close write on a short-lived scope that is
- * guaranteed to either complete or hit a hard timeout — it no longer depends
- * on the engine's main scope surviving long enough to finish.
+ * [startStopMutex] serialises start()/stop() transitions so a rapid
+ * start→stop→start sequence can never open two sessions simultaneously or
+ * close a session with zeroed stats:
+ *
+ *   E3 — stopping flag was advisory-only; start() could race close-write.
+ *   E4 — session-open coroutine could be cancelled before setting currentSessionId.
  */
 class TrekEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "TrekEngine"
 
-        // ── Accuracy ─────────────────────────────────────────────────────────
-        const val ACCURACY_THRESHOLD_M     = 20f
-        const val MIN_DISPLACEMENT_M       = 5.0
-        const val MIN_ELEVATION_DELTA_M    = 2.0
-
-        // ── Speed ─────────────────────────────────────────────────────────────
-        const val SPEED_WINDOW_SIZE        = 5
-        const val MIN_MEANINGFUL_SPEED_KMH = 0.8
-
-        // ── Battery saver ────────────────────────────────────────────────────
-        const val BATTERY_SAVER_DEBOUNCE_MS     = 30_000L
-        const val BATTERY_SAVER_SPEED_KMH       = 0.5
-        const val BATTERY_SAVER_EXIT_SPEED_KMH  = 1.2
+        const val ACCURACY_THRESHOLD_M         = 20f
+        const val MIN_DISPLACEMENT_M           = 5.0
+        const val MIN_ELEVATION_DELTA_M        = 2.0
+        const val SPEED_WINDOW_SIZE            = 5
+        const val MIN_MEANINGFUL_SPEED_KMH     = 0.8
+        const val BATTERY_SAVER_DEBOUNCE_MS    = 30_000L
+        const val BATTERY_SAVER_SPEED_KMH      = 0.5
+        const val BATTERY_SAVER_EXIT_SPEED_KMH = 1.2
         const val BATTERY_SAVER_EXIT_DEBOUNCE_MS = 20_000L
-
-        // ── Elevation recording ───────────────────────────────────────────────
-        const val ELEVATION_RECORD_INTERVAL_MS  = 60_000L
-        const val ELEVATION_PURGE_AGE_MS        = 30L * 24 * 60 * 60 * 1_000
-
-        // ── Ascent rate ───────────────────────────────────────────────────────
-        const val ASCENT_RATE_WINDOW_MS = 30 * 60 * 1_000L
-
-        /** Hard cap on how long the final session-close write may run before
-         *  we give up waiting and clear state anyway. Prevents a slow/stuck
-         *  DB write from holding the engine in a "stopping" limbo forever. */
-        const val SESSION_CLOSE_TIMEOUT_MS = 5_000L
+        const val ELEVATION_RECORD_INTERVAL_MS = 60_000L
+        const val ELEVATION_PURGE_AGE_MS       = 30L * 24 * 60 * 60 * 1_000
+        const val ASCENT_RATE_WINDOW_MS        = 30 * 60 * 1_000L
+        const val SESSION_CLOSE_TIMEOUT_MS     = 5_000L
     }
 
-    // ── Existing sub-systems (unchanged) ─────────────────────────────────────
-    private val gps      = GpsDataSource(context)
+    private val gps       = GpsDataSource(context)
     private val barometer = BarometerSource(context)
-    private val kalman   = KalmanFilter()
+    private val kalman    = KalmanFilter()
 
-    // ── DB access ─────────────────────────────────────────────────────────────
-    private val db            by lazy { SafetyDatabase.getInstance(context) }
-    private val sessionDao    by lazy { db.trekSessionDao() }
-    private val elevationDao  by lazy { db.trekElevationPointDao() }
+    private val db           by lazy { SafetyDatabase.getInstance(context) }
+    private val sessionDao   by lazy { db.trekSessionDao() }
+    private val elevationDao by lazy { db.trekElevationPointDao() }
 
-    // ── Coroutine scopes ────────────────────────────────────────────────────
-    // engineScope: lives only while a trek session is actively running.
-    // Cancelled synchronously and immediately in stop() — no longer waits on
-    // a completion callback to decide when cleanup happens.
+    // FIX E1/E2 — single-threaded dispatcher; ALL accumulator reads and writes
+    // happen here. No @Volatile needed for fields only touched on this dispatcher.
+    private val engineDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+    // engineScope: lives while a session is active. Cancelled on stop().
     private var engineScope: CoroutineScope? = null
 
-    // closeScope: a SEPARATE, short-lived scope used only for the final
-    // session-close write. It is independent of engineScope's lifetime by
-    // design, so cancelling engineScope in stop() can never interrupt the
-    // write that's supposed to happen because of stop(). It is itself
-    // cancelled once the close write finishes (or times out), so it never
-    // outlives its single use.
-    private var closeScope: CoroutineScope? = null
+    // FIX E3/E4 — serialises all start/stop transitions.
+    private val startStopMutex = Mutex()
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    private val _state = MutableStateFlow(TrekState())
+    // Signals when the session-open write is complete so stop() can safely
+    // read currentSessionId and accumulator values.
+    private var sessionOpenDeferred: CompletableDeferred<Unit>? = null
+
+    val _state = MutableStateFlow(TrekState())
     val state: StateFlow<TrekState> = _state
 
-    // ── GPS accumulators ──────────────────────────────────────────────────────
-    @Volatile private var lastAcceptedLocation : Location? = null
-    @Volatile private var lastAltitude         : Double?  = null
-    @Volatile private var totalGain            = 0.0
-    @Volatile private var totalLoss            = 0.0
-    @Volatile private var totalDistanceM       = 0.0
-    @Volatile private var maxAltM              = 0.0
-    @Volatile private var latestBaro           : Double?  = null
+    // ── Accumulators — only accessed on engineDispatcher ──────────────────────
+    private var lastAcceptedLocation  : Location? = null
+    private var lastAltitude          : Double?  = null
+    private var totalGain             = 0.0
+    private var totalLoss             = 0.0
+    private var totalDistanceM        = 0.0
+    private var maxAltM               = 0.0
+    private var latestBaro            : Double?  = null
+    private val speedWindow           = ArrayDeque<Float>(SPEED_WINDOW_SIZE)
+    private var inBatterySaver        = false
+    private var lowSpeedSinceMs       = 0L
+    private var highSpeedSinceMs      = 0L
+    private var currentSessionId      : Long? = null
+    private var sessionStartMs        = 0L
+    private var lastElevationRecordMs = 0L
+    private val ascentWindow          = ArrayDeque<Pair<Long, Double>>()
 
-    // ── Speed median window ───────────────────────────────────────────────────
-    private val speedWindow = ArrayDeque<Float>(SPEED_WINDOW_SIZE)
-
-    // ── Battery saver state ───────────────────────────────────────────────────
-    @Volatile private var inBatterySaver       = false
-    @Volatile private var lowSpeedSinceMs      = 0L
-    @Volatile private var highSpeedSinceMs     = 0L
-
-    // ── Session ───────────────────────────────────────────────────────────────
-    @Volatile private var currentSessionId     : Long? = null
-    @Volatile private var sessionStartMs       = 0L
-
-    // ── Elevation recording throttle ──────────────────────────────────────────
-    @Volatile private var lastElevationRecordMs = 0L
-
-    // ── Ascent rate: circular buffer of (timestampMs, altitudeM) ─────────────
-    private val ascentWindow = ArrayDeque<Pair<Long, Double>>()
-
-    // ── Engine lifecycle flag ─────────────────────────────────────────────────
-    @Volatile private var started = false
-
-    // ── Guards against start()/stop()/start() races (see class doc) ──────────
-    @Volatile private var stopping = false
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Public API
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────────
 
     fun start() {
-        if (started) {
-            Log.d(TAG, "already started — ignoring")
-            return
-        }
-        if (stopping) {
-            Log.w(TAG, "start() called while previous stop() still finishing — proceeding anyway, but a previous session's close-write may race with this one")
-        }
+        // FIX E3/E4 — launch in a fire-and-forget scope outside engineScope so
+        // the mutex acquisition and DB write are not on the calling thread.
+        CoroutineScope(SupervisorJob() + engineDispatcher).launch {
+            startStopMutex.withLock {
+                if (engineScope != null) {
+                    Log.d(TAG, "already started — ignoring")
+                    return@withLock
+                }
 
-        started = true
-        Log.d(TAG, "starting")
+                val scope = CoroutineScope(SupervisorJob() + engineDispatcher)
+                engineScope = scope
 
-        engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                // FIX E4 — open the session synchronously within the lock before
+                // starting GPS callbacks. currentSessionId is set before any
+                // location update can read it.
+                val deferred = CompletableDeferred<Unit>()
+                sessionOpenDeferred = deferred
 
-        engineScope!!.launch {
-            sessionDao.closeOrphanedSessions(System.currentTimeMillis())
-            elevationDao.purgeOlderThan(System.currentTimeMillis() - ELEVATION_PURGE_AGE_MS)
-            val sessionId = sessionDao.insert(
-                TrekSession(startMs = System.currentTimeMillis())
-            )
-            currentSessionId = sessionId
-            sessionStartMs   = System.currentTimeMillis()
-            Log.d(TAG, "session opened: id=$sessionId")
-
-            _state.value = _state.value.copy(currentSessionId = sessionId)
-        }
-
-        barometer.start { pressureAlt -> latestBaro = pressureAlt }
-        gps.start { location -> onLocation(location) }
-    }
-
-    fun stop() {
-        if (!started) return
-        gps.stop()
-        barometer.stop()
-        started = false
-
-        // 1. Cancel engineScope IMMEDIATELY and SYNCHRONOUSLY. Any in-flight
-        //    elevation-point inserts launched on it are abandoned — that's
-        //    fine, they're periodic telemetry, not critical data. This is
-        //    the key fix: engineScope's lifetime no longer depends on a
-        //    completion callback that might never run.
-        val scopeToCancel = engineScope
-        engineScope = null
-        scopeToCancel?.cancel()
-
-        // 2. Do the final session-close write on its own short-lived scope,
-        //    independent of the one we just cancelled. withTimeoutOrNull
-        //    guarantees this either finishes the write or gives up after
-        //    SESSION_CLOSE_TIMEOUT_MS — either way, closeScope below gets
-        //    cancelled and released, so nothing lingers.
-        val sessionId = currentSessionId
-        if (sessionId == null) {
-            // Nothing to close — clean up synchronously, no leftover scope.
-            resetAccumulators()
-            _state.value = TrekState()
-            return
-        }
-
-        stopping = true
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        closeScope = scope
-
-        scope.launch {
-            try {
-                withTimeoutOrNull(SESSION_CLOSE_TIMEOUT_MS) {
-                    val nowMs      = System.currentTimeMillis()
-                    val elapsedS   = (nowMs - sessionStartMs) / 1_000.0
-                    val avgSpeedKmh = if (elapsedS > 0) (totalDistanceM / elapsedS) * 3.6 else 0.0
-
-                    sessionDao.close(
-                        id          = sessionId,
-                        endMs       = nowMs,
-                        distanceM   = totalDistanceM,
-                        gainM       = totalGain,
-                        lossM       = totalLoss,
-                        maxAltM     = maxAltM,
-                        avgSpeedKmh = avgSpeedKmh
+                try {
+                    sessionDao.closeOrphanedSessions(System.currentTimeMillis())
+                    elevationDao.purgeOlderThan(
+                        System.currentTimeMillis() - ELEVATION_PURGE_AGE_MS
                     )
-                    Log.d(TAG, "session closed: id=$sessionId dist=${totalDistanceM}m")
-                } ?: Log.w(TAG, "session close write timed out after ${SESSION_CLOSE_TIMEOUT_MS}ms — session row may remain unclosed until next start()'s orphan cleanup")
-            } finally {
-                // Runs whether the write succeeded, timed out, or threw —
-                // guarantees this scope is always released, never leaked.
-                resetAccumulators()
-                _state.value = TrekState()
-                stopping = false
-                closeScope?.cancel()
-                closeScope = null
+                    val sessionId = sessionDao.insert(
+                        TrekSession(startMs = System.currentTimeMillis())
+                    )
+                    currentSessionId = sessionId
+                    sessionStartMs   = System.currentTimeMillis()
+                    Log.d(TAG, "session opened: id=$sessionId")
+                    _state.value = _state.value.copy(currentSessionId = sessionId)
+                    deferred.complete(Unit)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to open session: ${e.message}")
+                    deferred.completeExceptionally(e)
+                    engineScope?.cancel()
+                    engineScope = null
+                    return@withLock
+                }
+
+                // Start sensors only after session row exists.
+                barometer.start { pressureAlt ->
+                    // FIX E2 — dispatch onto engineDispatcher, not barometer's callback thread.
+                    scope.launch { latestBaro = pressureAlt }
+                }
+                gps.start { location ->
+                    // FIX E2 — all location processing on engineDispatcher.
+                    scope.launch { onLocation(location) }
+                }
             }
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // GPS callback — all the real work happens here
-    // ─────────────────────────────────────────────────────────────────────────
+    fun stop() {
+        CoroutineScope(SupervisorJob() + engineDispatcher).launch {
+            startStopMutex.withLock {
+                val scope = engineScope ?: run {
+                    Log.d(TAG, "stop() called but engine not started")
+                    return@withLock
+                }
+
+                gps.stop()
+                barometer.stop()
+
+                // FIX E4 — wait for the session-open write to finish before reading
+                // currentSessionId and accumulators. If it failed, there's nothing
+                // to close.
+                try {
+                    sessionOpenDeferred?.await()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Session never opened cleanly; skipping close write")
+                    scope.cancel()
+                    engineScope = null
+                    resetAccumulators()
+                    _state.value = TrekState()
+                    return@withLock
+                }
+
+                // FIX E1 — read accumulators on engineDispatcher (we're already on it
+                // inside startStopMutex, so these reads are safe).
+                scope.cancel()
+                engineScope = null
+
+                val sessionId = currentSessionId
+                if (sessionId == null) {
+                    resetAccumulators()
+                    _state.value = TrekState()
+                    return@withLock
+                }
+
+                // Snapshot values before resetAccumulators() clears them.
+                val distSnapshot  = totalDistanceM
+                val gainSnapshot  = totalGain
+                val lossSnapshot  = totalLoss
+                val maxAltSnapshot = maxAltM
+                val startSnapshot = sessionStartMs
+
+                resetAccumulators()
+                _state.value = TrekState()
+
+                // FIX — close write on its own scope with a hard timeout so it
+                // cannot block the mutex forever.
+                val closeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                try {
+                    withTimeoutOrNull(SESSION_CLOSE_TIMEOUT_MS) {
+                        val nowMs       = System.currentTimeMillis()
+                        val elapsedS    = (nowMs - startSnapshot) / 1_000.0
+                        val avgSpeedKmh = if (elapsedS > 0) (distSnapshot / elapsedS) * 3.6 else 0.0
+                        sessionDao.close(
+                            id          = sessionId,
+                            endMs       = nowMs,
+                            distanceM   = distSnapshot,
+                            gainM       = gainSnapshot,
+                            lossM       = lossSnapshot,
+                            maxAltM     = maxAltSnapshot,
+                            avgSpeedKmh = avgSpeedKmh
+                        )
+                        Log.d(TAG, "session closed: id=$sessionId dist=${distSnapshot}m")
+                    } ?: Log.w(TAG, "session close write timed out after ${SESSION_CLOSE_TIMEOUT_MS}ms")
+                } finally {
+                    closeScope.cancel()
+                }
+            }
+        }
+    }
+
+    // ── GPS processing — runs exclusively on engineDispatcher ─────────────────
 
     private fun onLocation(location: Location) {
+        // FIX E1/E2 — this function is only ever called via scope.launch on
+        // engineDispatcher (single-threaded), so all reads/writes below are safe.
 
         if (location.accuracy > ACCURACY_THRESHOLD_M) {
             Log.v(TAG, "Fix rejected: accuracy=${location.accuracy}m")
@@ -266,7 +249,7 @@ class TrekEngine(private val context: Context) {
         if (last != null) {
             val dist = last.distanceTo(location).toDouble()
             if (dist >= MIN_DISPLACEMENT_M) {
-                totalDistanceM += dist
+                totalDistanceM      += dist
                 lastAcceptedLocation = location
             }
         } else {
@@ -282,13 +265,11 @@ class TrekEngine(private val context: Context) {
         lastAltitude = altitude
         if (altitude > maxAltM) maxAltM = altitude
 
-        val rawSpeedMs = if (location.hasSpeed() && location.speed >= 0f)
-            location.speed else 0f
+        val rawSpeedMs = if (location.hasSpeed() && location.speed >= 0f) location.speed else 0f
         speedWindow.addLast(rawSpeedMs)
         if (speedWindow.size > SPEED_WINDOW_SIZE) speedWindow.removeFirst()
         val medianSpeedKmh = medianOf(speedWindow) * 3.6
-        val speedKmh = if (medianSpeedKmh < MIN_MEANINGFUL_SPEED_KMH) 0.0
-        else medianSpeedKmh
+        val speedKmh = if (medianSpeedKmh < MIN_MEANINGFUL_SPEED_KMH) 0.0 else medianSpeedKmh
 
         ascentWindow.addLast(Pair(now, altitude))
         val cutoff = now - ASCENT_RATE_WINDOW_MS
@@ -329,16 +310,12 @@ class TrekEngine(private val context: Context) {
             }
         }
 
-        // ── 8. Write elevation point to DB (throttled) ────────────────────────
-        // Guarded with a local snapshot of engineScope, not the property
-        // directly — if stop() races with this exact instant and nulls out
-        // engineScope between the check and the launch, we'd otherwise NPE
-        // on the !!-style access the original code relied on implicitly.
         val sessionId = currentSessionId
-        val scope = engineScope
-        if (sessionId != null && scope != null && now - lastElevationRecordMs >= ELEVATION_RECORD_INTERVAL_MS) {
+        if (sessionId != null && now - lastElevationRecordMs >= ELEVATION_RECORD_INTERVAL_MS) {
             lastElevationRecordMs = now
-            scope.launch {
+            // FIX E2 — launch on the current (engine) scope; if scope was cancelled
+            // by stop() between the null-check and here, the launch is a no-op.
+            engineScope?.launch {
                 elevationDao.insert(
                     TrekElevationPoint(
                         sessionId   = sessionId,
@@ -351,25 +328,23 @@ class TrekEngine(private val context: Context) {
         }
 
         _state.value = TrekState(
-            altitude             = altitude,
-            latitude             = location.latitude,
-            longitude            = location.longitude,
-            accuracy             = location.accuracy,
-            speedKmh             = speedKmh,
-            distanceKm           = totalDistanceM / 1_000.0,
-            gainMeters           = totalGain,
-            lossMeters           = totalLoss,
-            altitudeZone         = zone(altitude),
-            ascentRateM          = ascentRateM,
-            currentSessionId     = currentSessionId,
-            barometerAvailable   = baroAlt != null,
-            inBatterySaver       = inBatterySaver
+            altitude           = altitude,
+            latitude           = location.latitude,
+            longitude          = location.longitude,
+            accuracy           = location.accuracy,
+            speedKmh           = speedKmh,
+            distanceKm         = totalDistanceM / 1_000.0,
+            gainMeters         = totalGain,
+            lossMeters         = totalLoss,
+            altitudeZone       = zone(altitude),
+            ascentRateM        = ascentRateM,
+            currentSessionId   = currentSessionId,
+            barometerAvailable = baroAlt != null,
+            inBatterySaver     = inBatterySaver
         )
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun medianOf(window: ArrayDeque<Float>): Float {
         if (window.isEmpty()) return 0f
@@ -386,6 +361,7 @@ class TrekEngine(private val context: Context) {
         else        -> AltitudeZone.EXTREME
     }
 
+    // Called only from within startStopMutex on engineDispatcher — safe.
     private fun resetAccumulators() {
         lastAcceptedLocation  = null
         lastAltitude          = null
@@ -402,5 +378,6 @@ class TrekEngine(private val context: Context) {
         currentSessionId      = null
         sessionStartMs        = 0L
         lastElevationRecordMs = 0L
+        sessionOpenDeferred   = null
     }
 }
