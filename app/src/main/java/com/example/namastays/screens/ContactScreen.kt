@@ -464,8 +464,7 @@ fun EmergencyContactsScreen(
                     }
                 }
 
-                item { Spacer(Modifier.height(24.dp)) }
-            }
+                item { Spacer(Modifier.navigationBarsPadding()) }            }
         }
     }
 
@@ -721,7 +720,7 @@ fun AddContactScreen(
 
             LazyColumn(
                 modifier            = Modifier.fillMaxSize(),
-                contentPadding      = PaddingValues(bottom = 32.dp),
+                contentPadding      = PaddingValues(    bottom = 32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
 

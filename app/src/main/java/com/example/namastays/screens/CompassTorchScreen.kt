@@ -356,6 +356,7 @@ fun CompassScreen(navController: NavController) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                .navigationBarsPadding()
                 .padding(bottom = 28.dp),
             shape     = RoundedCornerShape(18.dp),
             colors    = CardDefaults.cardColors(containerColor = BgCard),
@@ -553,6 +554,7 @@ fun TorchScreen(navController: NavController) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                .navigationBarsPadding()
                 .padding(bottom = 28.dp),
             shape     = RoundedCornerShape(20.dp),
             colors    = CardDefaults.cardColors(containerColor = BgCard),

@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
  */
 internal object ApiClient {
 
-    private const val BASE_URL = "https://fe7c-113-199-254-56.ngrok-free.app/"
+    private const val BASE_URL = "https://054e-2407-1400-aa32-9a98-55b7-7b91-dc8c-885e.ngrok-free.app/"
 
     lateinit var tokenManager: TokenManager
         private set
