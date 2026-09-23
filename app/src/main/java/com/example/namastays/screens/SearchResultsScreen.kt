@@ -1,7 +1,7 @@
 package com.example.namastays.screens
 
+import android.net.Uri
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -44,36 +42,34 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.example.namastays.NamastaysApp
 import com.example.namastays.dto.PropertySearchResponse
+import com.example.namastays.ui.theme.CardWhite
+import com.example.namastays.ui.theme.DestructiveRed
+import com.example.namastays.ui.theme.FilterBg
+import com.example.namastays.ui.theme.FilterBorder
+import com.example.namastays.ui.theme.OnSurface
+import com.example.namastays.ui.theme.OnSurfaceVariant
+import com.example.namastays.ui.theme.OutlineColor
+import com.example.namastays.ui.theme.OutlineVariant
+import com.example.namastays.ui.theme.PageBackground
+import com.example.namastays.ui.theme.PlusJakartaSans
+import com.example.namastays.ui.theme.PlusJakartaSansBold
+import com.example.namastays.ui.theme.PrimaryIndigo
+import com.example.namastays.ui.theme.PrimaryText
+import com.example.namastays.ui.theme.SecondaryText
+import com.example.namastays.ui.theme.SubtleText
+import com.example.namastays.ui.theme.SurfaceContainer
 import com.example.namastays.viewmodel.SearchResultsUiState
 import com.example.namastays.viewmodel.SearchResultsViewModel
 import kotlin.math.roundToInt
 
-// ── Color tokens (matching HTML design exactly) ───────────────────────────────
-private val PageBackground      = Color(0xFFF7F8FA)   // body bg
-//private val CardWhite           = Color(0xFFFFFFFF)
-private val PrimaryIndigo       = Color(0xFF4648D4)   // --primary: #4648d4
-private val PrimaryContainer    = Color(0xFF6063EE)   // --primary-container
-private val SurfaceContainer    = Color(0xFFEFECF8)   // --surface-container (amenity chip bg)
-private val SurfaceVariant      = Color(0xFFE4E1ED)   // --surface-variant
-private val OutlineVariant      = Color(0xFFC7C4D7)   // --outline-variant (border)
-private val OnSurface           = Color(0xFF1B1B23)   // --on-surface
-private val OnSurfaceVariant    = Color(0xFF464554)   // --on-surface-variant
-private val OutlineColor        = Color(0xFF767586)   // --outline
-private val StarAmber           = Color(0xFF703700)   // --on-tertiary-fixed-variant
-private val FilterBg            = Color(0xFFF3F4F6)   // chip unselected / icon button bg
-private val FilterBorder        = Color(0xFFE5E7EB)   // chip border
-private val ShimmerBase         = Color(0xFFF0F0F0)
-private val ShimmerHighlight    = Color(0xFFF8F8F8)
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: PrimaryContainer, SurfaceVariant, StarAmber, ShimmerBase, and
+// ShimmerHighlight were declared in this file but never actually referenced
+// anywhere below — they were dead code. They now live in ui.theme.Color.kt
+// (for consistency with the rest of the moved tokens) but are intentionally
+// not imported here since nothing in this file uses them.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Aliases for readability
-//private val PrimaryText    = OnSurface
-//private val SecondaryText  = OnSurfaceVariant
-//private val SubtleText     = OutlineColor
-//private val DestructiveRed = Color(0xFFBA1A1A)
-
-// ── Font family ───────────────────────────────────────────────────────────────
-// Replace with your actual PlusJakartaSans font family reference
-// import com.example.namastays.ui.theme.PlusJakartaSans
 // ── Sort options ──────────────────────────────────────────────────────────────
 private enum class SortOption(val label: String) {
     RECOMMENDED("Recommended"),
@@ -92,23 +88,6 @@ private val filterChips = listOf(
     FilterChip("Homestay"),
     FilterChip("Price", isDropdown = true),
 )
-
-// ── Shimmer brush ─────────────────────────────────────────────────────────────
-//@Composable
-//private fun shimmerBrush(): Brush {
-//    val transition = rememberInfiniteTransition(label = "shimmer")
-//    val translateAnim by transition.animateFloat(
-//        initialValue   = 0f,
-//        targetValue    = 1000f,
-//        animationSpec  = infiniteRepeatable(tween(1200, easing = LinearEasing)),
-//        label          = "shimmerTranslate"
-//    )
-//    return Brush.linearGradient(
-//        colors     = listOf(ShimmerBase, ShimmerHighlight, ShimmerBase),
-//        start      = Offset(translateAnim - 300f, 0f),
-//        end        = Offset(translateAnim, 0f)
-//    )
-//}
 
 // ── Skeleton Card ─────────────────────────────────────────────────────────────
 @Composable
@@ -211,15 +190,35 @@ private fun ErrorStateView(message: String, onRetry: () -> Unit) {
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
+
+/**
+ * Property search results for a given [city], with filter chips, sort and
+ * price bottom sheets, and loading/empty/error states.
+ *
+ * Layout note: per product decision, this screen keeps its existing
+ * `WindowInsets(0,0,0,0)` padding approach (Scaffold's own padding is
+ * intentionally discarded) — this was flagged during audit as zeroing out
+ * inset compensation, but the current visual behaviour is being kept as-is.
+ *
+ * @param city the city to search properties in; can change at runtime via
+ * [SearchTopBar]'s inline search, which re-triggers [SearchResultsViewModel.fetchProperties].
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchResultsScreen(
     city: String,
     navController: NavController,
-    viewModel: SearchResultsViewModel = run {
-        val app = LocalContext.current.applicationContext as NamastaysApp
-        viewModel(factory = SearchResultsViewModel.Factory(app.deps.propertyRepository))
-    }) {
+) {
+    // Composable-safe ViewModel creation: applicationContext is read once
+    // here, outside of the default-parameter `run {}` block that previously
+    // executed inline in the function signature. That pattern re-evaluated
+    // the factory lambda on every recomposition whenever the default
+    // parameter was used, which is not guaranteed to be stable.
+    val app = LocalContext.current.applicationContext as NamastaysApp
+    val viewModel: SearchResultsViewModel = viewModel(
+        factory = SearchResultsViewModel.Factory(app.deps.propertyRepository)
+    )
+
     var currentCity by remember { mutableStateOf(city) }
     LaunchedEffect(currentCity) { viewModel.fetchProperties(currentCity) }
 
@@ -318,6 +317,12 @@ fun SearchResultsScreen(
     Scaffold(
         containerColor = PageBackground,
     ) { _ ->
+        // NOTE: Scaffold's own `padding` value is intentionally discarded
+        // here (underscore parameter name) in favor of a manual
+        // WindowInsets(0,0,0,0). This was flagged during audit as zeroing
+        // out inset compensation entirely, but the current behaviour is kept
+        // as-is per product decision — do not "fix" this without
+        // confirming the visual change is wanted first.
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -745,6 +750,14 @@ private fun SortSheetContent(selected: SortOption, onSelect: (SortOption) -> Uni
 }
 
 // ── Stay Card ─────────────────────────────────────────────────────────────────
+
+/**
+ * A single property result card.
+ *
+ * NOTE: This card has its own `onClick` (the whole Card is tappable) AND a
+ * separate "Book Now" button that fires the same callback. This duplication
+ * was flagged during audit but is being kept as-is per product decision.
+ */
 @Composable
 fun StayCard(stay: PropertySearchResponse, onClick: () -> Unit) {
     val photoCount = stay.imageUrls.size
@@ -913,7 +926,8 @@ fun StayCard(stay: PropertySearchResponse, onClick: () -> Unit) {
                         }
                     }
 
-                    // Book Now — indigo pill button
+                    // Book Now — indigo pill button. Kept alongside the
+                    // card's own onClick per product decision (see KDoc above).
                     Button(
                         onClick        = onClick,
                         shape          = RoundedCornerShape(12.dp),

@@ -19,6 +19,12 @@ data class SosPermissionStatus(
     // Hardware/service actually ON
     val isLocationEnabled  : Boolean = false,
     val isBluetoothEnabled : Boolean = false,
+
+    // CHANGE: whether the user has granted "Do Not Disturb access" (a special
+    // access, not a runtime permission). Needed for SOS alert notifications to
+    // bypass DND on the receiving device. Defaults to false until checked via
+    // SosPermissionHelper.hasNotificationPolicyAccess().
+    val hasNotificationPolicyAccess: Boolean = false,
 ) {
     // All permissions granted
     val allPermissionsGranted: Boolean
@@ -28,6 +34,12 @@ data class SosPermissionStatus(
                 hasNearbyDevicesPermission
 
     // Everything ready — permissions + services on
+    // CHANGE: intentionally does NOT include hasNotificationPolicyAccess.
+    // DND bypass is a "nice to have" enhancement, not a hard requirement for
+    // SOS to function — SMS + BLE still work without it. Treating it as
+    // required here would block users from sending/receiving SOS just because
+    // they haven't granted DND access, which is the wrong tradeoff for an
+    // emergency feature. It's surfaced separately in the UI as optional.
     val allGranted: Boolean
         get() = allPermissionsGranted &&
                 isLocationEnabled &&

@@ -16,6 +16,7 @@ import com.example.namastays.trek.TrekDatabase
 import com.example.namastays.trek.domain.CustomMarker
 import com.example.namastays.trek.domain.TrekItem
 import com.example.namastays.trek.domain.TrekNavigationSession
+import com.example.namastays.trek.domain.Waypoint
 import com.example.namastays.trek.util.ElevationPoint
 import com.example.namastays.trek.util.GpxParser
 import com.example.namastays.trek.util.LocationRepository
@@ -27,6 +28,7 @@ import com.example.namastays.trek.util.SpeedAdaptiveZoom
 import com.example.namastays.trek.util.TrailNavigator
 import com.example.namastays.trek.util.TrekLocation
 import com.example.namastays.trek.util.MBTilesLoader
+import com.example.namastays.trek.util.WaypointParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,6 +44,15 @@ import org.maplibre.geojson.Point
 
 // ─── UI state ─────────────────────────────────────────────────────────────────
 
+/**
+ * Single source of truth for everything the Trek Map screen renders.
+ *
+ * [waypoints] is owned here rather than as local Compose state in the screen —
+ * previously it was parsed inside the composable's onMapReady callback into a
+ * `remember { mutableStateOf(...) }`, which reset to empty on process death /
+ * configuration change until re-parsed, and created a second, inconsistent
+ * state-ownership pattern alongside every other ViewModel-driven field.
+ */
 data class TrekMapUiState(
     val tilesExist: Boolean = false,
     val isDownloaded: Boolean = false,
@@ -50,6 +61,7 @@ data class TrekMapUiState(
     val trek: TrekItem? = null,
     val elevationPoints: List<ElevationPoint> = emptyList(),
     val gpxPoints: List<Point> = emptyList(),
+    val waypoints: List<Waypoint> = emptyList(),
 
     val isNavigating: Boolean = false,
     val isAcquiringGps: Boolean = false,
@@ -91,41 +103,53 @@ class TrekMapViewModel(
     )
     private val locationRepository = LocationRepository(application)
 
-    // FIX: BearingSmoother removed — bearing smoothing is now done entirely by
-    // the zero-allocation FloatArray ring buffer in startLocationTracking().
-    // BearingSmoother was still instantiated and exposed but never called.
     val speedAdaptiveZoom = SpeedAdaptiveZoom()
     val snapshotStore     = LocationSnapshotStore()
 
     private val _uiState = MutableStateFlow(TrekMapUiState())
     val uiState: StateFlow<TrekMapUiState> = _uiState.asStateFlow()
 
-    // FIX: total trail distance cached after route loads — passed into
-    // TrailNavigator.calculateState() so it never re-sums all N GPX points
-    // at 1 Hz during navigation (was O(N) per GPS fix for a constant value).
+    /**
+     * Total trail length in meters, cached once after the route loads and
+     * reused by TrailNavigator on every GPS fix. Recomputing this by summing
+     * all N GPX points at ~1 Hz would be O(N) per second for a value that
+     * never changes for the lifetime of a navigation session.
+     */
     private var totalTrailDistance = 0f
 
     private var previousNavState: NavigationState? = null
     private var navStartTimeMs = 0L
 
-    // Zero-allocation bearing ring buffer
-    private val bearingBuf     = FloatArray(5)
+    /**
+     * Zero-allocation circular buffer smoothing raw GPS bearing over the last
+     * [BEARING_BUF_SIZE] fixes. A plain arithmetic average of raw bearings is
+     * wrong across the 359°→0° wrap (averaging 359° and 1° should give 0°,
+     * not 180°), so we accumulate sin/cos components — see [bearingBufAverage].
+     */
+    private val bearingBuf     = FloatArray(BEARING_BUF_SIZE)
     private var bearingBufHead = 0
     private var bearingBufSize = 0
 
-    // Sensor
+    // Sensor (compass). Lifecycle is owned entirely by the composable's
+    // DisposableEffect(state.isNavigating): startSensor() while browsing,
+    // stopSensor() while navigating (navigation uses GPS bearing instead).
+    // startNavigation()/stopNavigation() intentionally never touch the
+    // sensor — that was the root cause of a prior double-registration bug.
     private var sensorManager: SensorManager? = null
     private var sensorListener: SensorEventListener? = null
 
-    // Jobs
     private var navigationJob: Job? = null
     private var timerJob: Job? = null
     private var deadReckonJob: Job? = null
 
     private var lastSessionSaveMs = 0L
 
-    // Set by the composable inside onMapReady; nulled by stopNavigation() and
-    // the composable's DisposableEffect(Unit) onDispose — whichever fires first.
+    /**
+     * Set by the composable inside its onMapReady callback; nulled by
+     * [stopNavigation] and by the composable's own DisposableEffect(Unit)
+     * onDispose — whichever happens first — so the ~60 Hz dead-reckoning loop
+     * can never invoke a callback into a destroyed map.
+     */
     var onDotUpdate: ((lat: Double, lng: Double, bearing: Float) -> Unit)? = null
 
     init {
@@ -140,7 +164,9 @@ class TrekMapViewModel(
             val trek = repository.getTrekById(trekId)
             _uiState.update { it.copy(trek = trek) }
 
-            // Tile / download status
+            // Reconcile Room's "downloaded" flag against the actual file on
+            // disk — covers the case where a download was interrupted or the
+            // mbtiles file was removed out from under Room.
             val fileExists        = MBTilesLoader.isDownloaded(getApplication(), trekId)
             val roomSaysDownloaded = withContext(Dispatchers.IO) { downloadDao.isDownloaded(trekId) }
             if (roomSaysDownloaded && !fileExists) {
@@ -150,24 +176,25 @@ class TrekMapViewModel(
                 _uiState.update { it.copy(tilesExist = fileExists, isDownloaded = fileExists) }
             }
 
-            // FIX: parse GPX file ONCE via parseFull() instead of calling
-            // parseToGeoJson / parseElevationProfile / getBounds / parseToPoints
-            // separately (was 4 full file reads + 4 SAX parse passes on startup).
+            // Single SAX pass over the GPX file — see GpxParser.parseFull KDoc.
             val parseResult = withContext(Dispatchers.IO) {
                 GpxParser.parseFull(getApplication(), trekId)
             }
-
-            // Cache total distance — used by TrailNavigator on every GPS fix.
             totalTrailDistance = TrailNavigator.calculateTotalDistance(parseResult.points)
+
+            val parsedWaypoints = withContext(Dispatchers.IO) {
+                WaypointParser.parse(getApplication(), trekId)
+            }
 
             _uiState.update {
                 it.copy(
                     gpxPoints       = parseResult.points,
-                    elevationPoints = parseResult.elevationProfile
+                    elevationPoints = parseResult.elevationProfile,
+                    waypoints       = parsedWaypoints
                 )
             }
 
-            // Custom markers — live Flow
+            // Custom markers — live Flow, kept up to date for the ViewModel's lifetime.
             launch {
                 markerDao.getMarkersForTrek(trekId).collect { markers ->
                     _uiState.update { it.copy(customMarkers = markers) }
@@ -195,12 +222,10 @@ class TrekMapViewModel(
         }
     }
 
-    // ─── Sensor ────────────────────────────────────────────────────────────────
-    // The DisposableEffect in TrekMapScreen is the SINGLE owner of the sensor
-    // lifecycle. startNavigation() / stopNavigation() do NOT touch the sensor.
+    // ─── Sensor (compass) ────────────────────────────────────────────────────
 
     fun startSensor() {
-        if (sensorListener != null) return
+        if (sensorListener != null) return // already registered — avoid double registration
         val ctx: Context = getApplication()
         val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         sensorManager = sm
@@ -234,8 +259,6 @@ class TrekMapViewModel(
     }
 
     // ─── Locate me ─────────────────────────────────────────────────────────────
-    // FIX: only re-animates camera on the fresh fix if it differs from the
-    // stale one by > 20 m, preventing a double-jitter animation.
 
     @SuppressLint("MissingPermission")
     fun locateMe(onLocation: (TrekLocation) -> Unit) {
@@ -260,6 +283,9 @@ class TrekMapViewModel(
                 fresh != null -> {
                     _uiState.update { it.copy(lastKnownLocation = fresh) }
                     snapshotStore.update(fresh)
+                    // Only re-animate the camera if the fresh fix meaningfully
+                    // differs from the quick one, to avoid a double-jitter
+                    // animation when both fixes land in effectively the same spot.
                     val shouldAnimate = quick == null || LocationTracker.distanceBetween(
                         quick.latitude, quick.longitude,
                         fresh.latitude, fresh.longitude
@@ -293,8 +319,9 @@ class TrekMapViewModel(
         timerJob       = null
         deadReckonJob  = null
 
-        // Null the dot-update lambda so the dead-reckoning coroutine cannot
-        // fire into a destroyed map, regardless of what triggered the stop.
+        // Belt-and-braces alongside the composable's own onDispose: null the
+        // dot-update lambda here too, so the dead-reckoning loop can never
+        // fire into a destroyed map regardless of what triggered the stop.
         onDotUpdate = null
 
         previousNavState = null
@@ -313,11 +340,12 @@ class TrekMapViewModel(
         }
     }
 
-    // FIX: guard against empty gpxPoints (parse failure or route not yet loaded).
     fun resumeNavigation(session: TrekNavigationSession) {
         dismissResumeDialog()
         val gpxPoints = _uiState.value.gpxPoints
         if (gpxPoints.isEmpty()) {
+            // Route hasn't loaded (or failed to parse) — discard the stale
+            // session rather than resuming against an empty trail.
             viewModelScope.launch { withContext(Dispatchers.IO) { sessionDao.clearSession(trekId) } }
             startNavigation()
             return
@@ -332,7 +360,6 @@ class TrekMapViewModel(
             )
         } ?: 0f
 
-        // FIX: use cached totalTrailDistance instead of recomputing.
         val total = if (totalTrailDistance > 0f)
             totalTrailDistance
         else
@@ -377,9 +404,12 @@ class TrekMapViewModel(
         stopNavigation()
     }
 
-    // FIX: single _uiState.update to avoid intermediate state where
-    // showCompletedDialog = false but isNavigating = true and navigationState = null,
-    // which caused NavigationBottomSheet to briefly flash with null state.
+    /**
+     * One atomic state update covering dialog dismissal + state clearing, so
+     * there's no intermediate frame where showCompletedDialog = false but
+     * isNavigating is still true with a null navigationState (which used to
+     * make NavigationBottomSheet flash with null content for a frame).
+     */
     fun dismissCompletedDialog() {
         _uiState.update {
             it.copy(showCompletedDialog = false, navigationState = null, cameraFollowMode = false)
@@ -411,7 +441,6 @@ class TrekMapViewModel(
                 .collect { location ->
                     _uiState.update { it.copy(isAcquiringGps = false) }
 
-                    // Zero-allocation ring buffer bearing average
                     bearingBuf[bearingBufHead] = location.bearing
                     bearingBufHead = (bearingBufHead + 1) % bearingBuf.size
                     if (bearingBufSize < bearingBuf.size) bearingBufSize++
@@ -432,7 +461,6 @@ class TrekMapViewModel(
                         elevationPoints    = currentUiState.elevationPoints,
                         trailheadName      = currentUiState.trek?.name ?: "the trailhead",
                         avgSpeedMs         = avgSpeedMs,
-                        // FIX: pass cached total so TrailNavigator never re-sums all points.
                         totalTrailDistance = totalTrailDistance
                     )
 
@@ -489,9 +517,9 @@ class TrekMapViewModel(
 
                 val elapsed = System.currentTimeMillis() - loc.timestamp
 
-                // FIX: skip if timestamp is stale (resumed session with old timestamp).
-                // Without this the dot would teleport to the old position on every
-                // 16 ms tick until the first fresh GPS fix arrived.
+                // Skip stale fixes (e.g. a resumed session with an old
+                // timestamp) — otherwise the dot would teleport to the old
+                // position on every 16ms tick until the first fresh GPS fix arrives.
                 if (elapsed > 5_000) continue
 
                 if (loc.speed > 0.3f && elapsed in 16..3000) {
@@ -534,11 +562,25 @@ class TrekMapViewModel(
         bearingBufSize = 0
     }
 
+    /**
+     * Circular mean of the last [bearingBufSize] bearings via sin/cos
+     * accumulation. A plain arithmetic average is wrong across the 359°→0°
+     * wraparound; accumulating components and recovering the angle with
+     * atan2 handles the wrap correctly.
+     *
+     * CRASH FIX: the previous version used an inclusive range
+     * `0..bearingBufSize`, which reads one index past the valid range once
+     * the buffer fills — e.g. `bearingBuf[5]` on a size-5 array — throwing
+     * ArrayIndexOutOfBoundsException a few seconds into every navigation
+     * session. Changed to the exclusive range `0 until bearingBufSize`.
+     * Note this averages by *occupancy count*, not temporal order — that's
+     * fine, since a mean doesn't depend on the order of its inputs.
+     */
     private fun bearingBufAverage(): Float {
         if (bearingBufSize == 0) return 0f
         var sinSum = 0.0
         var cosSum = 0.0
-        for (i in 0..bearingBufSize) {
+        for (i in 0 until bearingBufSize) {
             val rad = Math.toRadians(bearingBuf[i].toDouble())
             sinSum += Math.sin(rad)
             cosSum += Math.cos(rad)
@@ -556,5 +598,9 @@ class TrekMapViewModel(
         navigationJob?.cancel()
         timerJob?.cancel()
         deadReckonJob?.cancel()
+    }
+
+    private companion object {
+        const val BEARING_BUF_SIZE = 5
     }
 }

@@ -7,10 +7,10 @@ import retrofit2.http.Path
 interface TrekApiService {
 
     // Returns all treks — itineraryDays and highlights are empty lists here.
-    @GET("api/treks")
+    @GET("treks")
     suspend fun getAllTreks(): List<TrekApiModel>
 
     // Returns a single trek with fully populated itineraryDays and highlights.
-    @GET("api/treks/{id}")
+    @GET("treks/{id}")
     suspend fun getTrekById(@Path("id") id: String): TrekApiModel
 }

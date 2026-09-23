@@ -40,10 +40,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.namastays.data.EmergencyContactEntity
+import com.example.namastays.ui.theme.PlusJakartaSans
 import com.example.namastays.viewmodel.SafetyViewModel
 import kotlinx.coroutines.launch
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
+// Private to this file — contact-screen specific shades.
 private val EcPageBg      = Color(0xFFF7F8FA)
 private val EcCardBg      = Color(0xFFFFFFFF)
 private val EcCardBorder  = Color(0xFFE5E7EB)
@@ -55,18 +57,29 @@ private val EcRed         = Color(0xFFEF4444)
 private val EcAccent      = Color(0xFF6366F1)
 private val EcAccentBg    = Color(0xFFEEF2FF)
 private val EcNavy        = Color(0xFF1E3A5F)
+
+/**
+ * Avatar tint colours cycled via a hash of the contact's name so each
+ * contact gets a deterministic, visually distinct colour.
+ */
 private val EcAvatarTints = listOf(
     Color(0xFF6366F1), Color(0xFF22C55E), Color(0xFFEF4444),
     Color(0xFFF97316), Color(0xFF0EA5E9), Color(0xFFEC4899),
 )
 
+/** Returns a deterministic avatar tint for [seed] (the contact's name). */
 private fun avatarTint(seed: String) = EcAvatarTints[
     seed.hashCode().mod(EcAvatarTints.size).let { if (it < 0) it + EcAvatarTints.size else it }
 ]
 
 private const val MAX_CONTACTS = 5
 
-// ─── Local bodies data ────────────────────────────────────────────────────────
+// ─── Local Bodies Data ────────────────────────────────────────────────────────
+
+/**
+ * A single local emergency service entry shown in the collapsible
+ * "LOCAL EMERGENCY SERVICES" section of [EmergencyContactsScreen].
+ */
 data class LocalBody(
     val name: String,
     val number: String,
@@ -75,7 +88,14 @@ data class LocalBody(
     val iconTint: Color,
 )
 
-val localBodies = listOf(
+/**
+ * Static list of Nepal emergency services displayed in the contact screen.
+ *
+ * Private — this list is only consumed within this file by
+ * [EmergencyContactsScreen]. If another screen ever needs it, move it to
+ * a shared data source rather than making this public.
+ */
+private val localBodies = listOf(
     LocalBody("Mountain Rescue",   "112",  Icons.Outlined.Landscape,           Color(0xFFFFE4E4), Color(0xFFE53935)),
     LocalBody("Tourist Police",    "114",  Icons.Outlined.LocalPolice,         Color(0xFFE8EEFF), Color(0xFF3B82F6)),
     LocalBody("Ambulance",         "108",  Icons.Outlined.LocalHospital,       Color(0xFFE6FAF0), Color(0xFF22C55E)),
@@ -84,6 +104,15 @@ val localBodies = listOf(
 )
 
 // ─── Emergency Contacts Screen ────────────────────────────────────────────────
+
+/**
+ * Displays the user's saved emergency contacts (up to [MAX_CONTACTS]) and a
+ * collapsible section of local Nepal emergency services.
+ *
+ * Contacts are stored in Room via [SafetyViewModel] and observed as a
+ * [StateFlow]. The screen also enforces the [MAX_CONTACTS] limit via a
+ * Snackbar if the user tries to add beyond it.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmergencyContactsScreen(
@@ -98,36 +127,32 @@ fun EmergencyContactsScreen(
     var showDeleteDialog    by remember { mutableStateOf<EmergencyContactEntity?>(null) }
     var localBodiesExpanded by remember { mutableStateOf(true) }
 
-    // Chevron rotation animation
+    // Animated chevron rotation for the local bodies expand/collapse toggle.
     val chevronRotation by animateFloatAsState(
-        targetValue = if (localBodiesExpanded) 180f else 0f,
+        targetValue   = if (localBodiesExpanded) 180f else 0f,
         animationSpec = tween(durationMillis = 300, easing = EaseInOutCubic),
-        label = "chevron"
+        label         = "chevron_rotation"
     )
 
     Scaffold(
         snackbarHost = {
             SnackbarHost(snackbarHostState) { data ->
                 Snackbar(
-                    snackbarData    = data,
-                    containerColor  = Color(0xFF1F2937),
-                    contentColor    = Color.White,
-                    shape           = RoundedCornerShape(12.dp),
-                    modifier        = Modifier.padding(16.dp),
+                    snackbarData   = data,
+                    containerColor = Color(0xFF1F2937),
+                    contentColor   = Color.White,
+                    shape          = RoundedCornerShape(12.dp),
+                    modifier       = Modifier.padding(16.dp),
                 )
             }
         },
-        containerColor = EcPageBg,
+        containerColor      = EcPageBg,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                // consume only top padding (status bar); ignore bottom so no gap appears
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
 
-            // ── Custom top bar ────────────────────────────────────────────────
+            // ── Top bar ───────────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -147,6 +172,7 @@ fun EmergencyContactsScreen(
                     fontSize   = 18.sp,
                     color      = EcTextPri,
                 )
+                // Add button — enforces MAX_CONTACTS limit with a Snackbar
                 Row(
                     modifier = Modifier
                         .padding(end = 12.dp)
@@ -177,7 +203,6 @@ fun EmergencyContactsScreen(
                 }
             }
 
-            // ── Thin divider under top bar ────────────────────────────────────
             HorizontalDivider(color = EcCardBorder, thickness = 0.5.dp)
 
             LazyColumn(
@@ -186,7 +211,7 @@ fun EmergencyContactsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
 
-                // ── Dark navy SOS info banner ─────────────────────────────────
+                // ── SOS info banner ───────────────────────────────────────────
                 item {
                     Row(
                         modifier = Modifier
@@ -204,11 +229,7 @@ fun EmergencyContactsScreen(
                                 .background(Color.White.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                Icons.Outlined.Info, null,
-                                tint     = Color.White,
-                                modifier = Modifier.size(16.dp),
-                            )
+                            Icon(Icons.Outlined.Info, null, tint = Color.White, modifier = Modifier.size(16.dp))
                         }
                         Text(
                             "SOS will send your GPS location and critical medical info to all contacts listed below simultaneously.",
@@ -274,11 +295,7 @@ fun EmergencyContactsScreen(
                                     .background(EcAccentBg),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(
-                                    Icons.Outlined.ContactPhone, null,
-                                    tint     = EcAccent,
-                                    modifier = Modifier.size(28.dp),
-                                )
+                                Icon(Icons.Outlined.ContactPhone, null, tint = EcAccent, modifier = Modifier.size(28.dp))
                             }
                             Spacer(Modifier.height(4.dp))
                             Text(
@@ -321,7 +338,7 @@ fun EmergencyContactsScreen(
                         }
                     }
                 } else {
-                    // ── Individual contact cards ───────────────────────────────
+                    // ── Contact cards ─────────────────────────────────────────
                     items(contacts, key = { it.id }) { contact ->
                         EcContactCard(
                             contact  = contact,
@@ -330,7 +347,7 @@ fun EmergencyContactsScreen(
                         )
                     }
 
-                    // ── Add Another / Limit reached button ────────────────────
+                    // ── Add another / limit reached ───────────────────────────
                     item {
                         if (contacts.size < MAX_CONTACTS) {
                             Box(
@@ -358,7 +375,6 @@ fun EmergencyContactsScreen(
                                 }
                             }
                         } else {
-                            // Max reached notice
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -382,7 +398,7 @@ fun EmergencyContactsScreen(
                     }
                 }
 
-                // ── LOCAL EMERGENCY SERVICES ──────────────────────────────────
+                // ── Local emergency services (collapsible) ────────────────────
                 item {
                     Column(
                         modifier = Modifier
@@ -391,7 +407,6 @@ fun EmergencyContactsScreen(
                             .background(EcCardBg)
                             .border(1.dp, EcCardBorder, RoundedCornerShape(16.dp)),
                     ) {
-                        // Header row — animated chevron
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -439,15 +454,12 @@ fun EmergencyContactsScreen(
                             )
                         }
 
-                        // Animated expand/collapse
                         AnimatedVisibility(
                             visible = localBodiesExpanded,
-                            enter   = expandVertically(
-                                animationSpec = tween(300, easing = EaseOutCubic)
-                            ) + fadeIn(animationSpec = tween(250)),
-                            exit    = shrinkVertically(
-                                animationSpec = tween(250, easing = EaseInCubic)
-                            ) + fadeOut(animationSpec = tween(200)),
+                            enter   = expandVertically(animationSpec = tween(300, easing = EaseOutCubic)) +
+                                    fadeIn(animationSpec = tween(250)),
+                            exit    = shrinkVertically(animationSpec = tween(250, easing = EaseInCubic)) +
+                                    fadeOut(animationSpec = tween(200)),
                         ) {
                             Column {
                                 HorizontalDivider(color = EcCardBorder, thickness = 0.5.dp)
@@ -464,11 +476,13 @@ fun EmergencyContactsScreen(
                     }
                 }
 
-                item { Spacer(Modifier.navigationBarsPadding()) }            }
+                // Bottom navigation bar padding so the last item is not clipped.
+                item { Spacer(Modifier.navigationBarsPadding()) }
+            }
         }
     }
 
-    // ── Delete dialog ─────────────────────────────────────────────────────────
+    // ── Delete confirmation dialog ─────────────────────────────────────────────
     showDeleteDialog?.let { contact ->
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
@@ -484,12 +498,21 @@ fun EmergencyContactsScreen(
                 }
             },
             title = {
-                Text("Remove Contact", fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = EcTextPri)
+                Text(
+                    "Remove Contact",
+                    fontFamily = PlusJakartaSans,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 17.sp,
+                    color      = EcTextPri
+                )
             },
             text = {
                 Text(
                     "Remove ${contact.name} from your emergency contacts? They'll no longer receive SOS alerts.",
-                    fontFamily = PlusJakartaSans, fontSize = 14.sp, color = EcTextSec, lineHeight = 20.sp,
+                    fontFamily = PlusJakartaSans,
+                    fontSize   = 14.sp,
+                    color      = EcTextSec,
+                    lineHeight = 20.sp,
                 )
             },
             confirmButton = {
@@ -500,7 +523,13 @@ fun EmergencyContactsScreen(
                         .clickable { vm.deleteContact(contact); showDeleteDialog = null }
                         .padding(horizontal = 18.dp, vertical = 10.dp),
                 ) {
-                    Text("Remove", fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                    Text(
+                        "Remove",
+                        fontFamily = PlusJakartaSans,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 14.sp,
+                        color      = Color.White
+                    )
                 }
             },
             dismissButton = {
@@ -511,7 +540,13 @@ fun EmergencyContactsScreen(
                         .clickable { showDeleteDialog = null }
                         .padding(horizontal = 18.dp, vertical = 10.dp),
                 ) {
-                    Text("Cancel", fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = EcTextSec)
+                    Text(
+                        "Cancel",
+                        fontFamily = PlusJakartaSans,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 14.sp,
+                        color      = EcTextSec
+                    )
                 }
             },
             containerColor = EcCardBg,
@@ -521,6 +556,12 @@ fun EmergencyContactsScreen(
 }
 
 // ─── Contact Card ─────────────────────────────────────────────────────────────
+
+/**
+ * A single saved emergency contact card with call and delete actions.
+ * The avatar shows the contact's initials with a deterministic colour
+ * derived from their name via [avatarTint].
+ */
 @Composable
 private fun EcContactCard(
     contact: EmergencyContactEntity,
@@ -549,14 +590,26 @@ private fun EcContactCard(
                 .background(tint.copy(alpha = 0.14f)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(initials, fontFamily = PlusJakartaSans, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = tint)
+            Text(
+                initials,
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize   = 16.sp,
+                color      = tint
+            )
         }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            modifier            = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             Text(
                 contact.name,
-                fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold,
-                fontSize = 15.sp, color = EcTextPri,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.Bold,
+                fontSize   = 15.sp,
+                color      = EcTextPri,
+                maxLines   = 1,
+                overflow   = TextOverflow.Ellipsis,
             )
             Row(
                 verticalAlignment     = Alignment.CenterVertically,
@@ -565,8 +618,11 @@ private fun EcContactCard(
                 Icon(Icons.Outlined.Phone, null, tint = EcTextHint, modifier = Modifier.size(12.dp))
                 Text(
                     contact.phone,
-                    fontFamily = PlusJakartaSans, fontSize = 13.sp, color = EcTextSec,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    fontFamily = PlusJakartaSans,
+                    fontSize   = 13.sp,
+                    color      = EcTextSec,
+                    maxLines   = 1,
+                    overflow   = TextOverflow.Ellipsis,
                 )
                 if (contact.relation.isNotBlank()) {
                     Box(
@@ -577,8 +633,10 @@ private fun EcContactCard(
                     ) {
                         Text(
                             contact.relation,
-                            fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold,
-                            fontSize = 11.sp, color = tint,
+                            fontFamily = PlusJakartaSans,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize   = 11.sp,
+                            color      = tint,
                         )
                     }
                 }
@@ -608,6 +666,8 @@ private fun EcContactCard(
 }
 
 // ─── Local Body Row ───────────────────────────────────────────────────────────
+
+/** A single local emergency service row with a call button. */
 @Composable
 private fun LocalBodyRow(body: LocalBody, onCall: () -> Unit) {
     Row(
@@ -626,9 +686,23 @@ private fun LocalBodyRow(body: LocalBody, onCall: () -> Unit) {
         ) {
             Icon(body.icon, null, tint = body.iconTint, modifier = Modifier.size(20.dp))
         }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(body.name, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = EcTextPri)
-            Text(body.number, fontFamily = PlusJakartaSans, fontSize = 13.sp, color = EcTextSec)
+        Column(
+            modifier            = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                body.name,
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.Bold,
+                fontSize   = 14.sp,
+                color      = EcTextPri
+            )
+            Text(
+                body.number,
+                fontFamily = PlusJakartaSans,
+                fontSize   = 13.sp,
+                color      = EcTextSec
+            )
         }
         Box(
             modifier = Modifier
@@ -638,24 +712,45 @@ private fun LocalBodyRow(body: LocalBody, onCall: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 9.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
                 Icon(Icons.Outlined.Call, null, tint = Color.White, modifier = Modifier.size(13.dp))
-                Text("Call", fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                Text(
+                    "Call",
+                    fontFamily = PlusJakartaSans,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 13.sp,
+                    color      = Color.White
+                )
             }
         }
     }
 }
 
-// ─── Add Contact Screen — Full-screen with large avatar header ────────────────
+// ─── Add Contact Screen ────────────────────────────────────────────────────────
+
+/**
+ * Full-screen form to add a new emergency contact.
+ *
+ * Features a large avatar preview at the top that updates live as the user
+ * types their name — gives immediate visual feedback on how the contact
+ * will appear in the list.
+ *
+ * The Save action is gated: name must be non-blank and phone must be at
+ * least 7 digits. Both the top-right "Save" button and the bottom CTA
+ * share the same validation logic to avoid drift.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddContactScreen(
     navController: NavController,
     vm: SafetyViewModel = viewModel(),
 ) {
-    var name      by remember { mutableStateOf("") }
-    var phone     by remember { mutableStateOf("") }
-    var relation  by remember { mutableStateOf("") }
+    var name       by remember { mutableStateOf("") }
+    var phone      by remember { mutableStateOf("") }
+    var relation   by remember { mutableStateOf("") }
     var nameError  by remember { mutableStateOf(false) }
     var phoneError by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
@@ -664,15 +759,23 @@ fun AddContactScreen(
     val tint         = if (name.isNotBlank()) avatarTint(name) else Color(0xFF9CA3AF)
     val canSave      = name.isNotBlank() && phone.length >= 7
 
-    Scaffold(containerColor = EcPageBg,
+    /** Shared save handler used by both the top-right button and the CTA. */
+    val onSave: () -> Unit = {
+        nameError  = name.isBlank()
+        phoneError = phone.length < 7
+        if (!nameError && !phoneError) {
+            vm.addContact(name.trim(), phone.trim(), relation.trim())
+            navController.popBackStack()
+        }
+    }
+
+    Scaffold(
+        containerColor      = EcPageBg,
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
 
-            // ── Custom top bar ────────────────────────────────────────────────
+            // ── Top bar ───────────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -692,20 +795,12 @@ fun AddContactScreen(
                     fontSize   = 18.sp,
                     color      = EcTextPri,
                 )
-                // Save text button top-right
                 Box(
                     modifier = Modifier
                         .padding(end = 12.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (canSave) EcGreen else Color.Transparent)
-                        .clickable(enabled = canSave) {
-                            nameError  = name.isBlank()
-                            phoneError = phone.length < 7
-                            if (!nameError && !phoneError) {
-                                vm.addContact(name, phone, relation)
-                                navController.popBackStack()
-                            }
-                        }
+                        .clickable(enabled = canSave, onClick = onSave)
                         .padding(horizontal = 14.dp, vertical = 7.dp),
                 ) {
                     Text(
@@ -720,7 +815,9 @@ fun AddContactScreen(
 
             LazyColumn(
                 modifier            = Modifier.fillMaxSize(),
-                contentPadding      = PaddingValues(    bottom = 32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
+                contentPadding      = PaddingValues(
+                    bottom = 32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                ),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
 
@@ -731,10 +828,7 @@ fun AddContactScreen(
                             .fillMaxWidth()
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(
-                                        tint.copy(alpha = 0.12f),
-                                        EcPageBg,
-                                    )
+                                    colors = listOf(tint.copy(alpha = 0.12f), EcPageBg)
                                 )
                             )
                             .padding(vertical = 36.dp),
@@ -744,7 +838,6 @@ fun AddContactScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            // Large avatar circle
                             Box(
                                 modifier = Modifier
                                     .size(100.dp)
@@ -761,7 +854,6 @@ fun AddContactScreen(
                                     color      = tint,
                                 )
                             }
-                            // Live name + relation preview
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -786,7 +878,7 @@ fun AddContactScreen(
                     }
                 }
 
-                // ── Form fields card ──────────────────────────────────────────
+                // ── Form fields ───────────────────────────────────────────────
                 item {
                     Column(
                         modifier = Modifier
@@ -798,7 +890,6 @@ fun AddContactScreen(
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        // Name field
                         EcFormField(
                             value         = name,
                             onValueChange = { name = it; nameError = false },
@@ -810,10 +901,7 @@ fun AddContactScreen(
                             imeAction     = ImeAction.Next,
                             onNext        = { focusManager.moveFocus(FocusDirection.Down) },
                         )
-
                         HorizontalDivider(color = EcCardBorder, thickness = 0.5.dp)
-
-                        // Phone field
                         EcFormField(
                             value         = phone,
                             onValueChange = { phone = it; phoneError = false },
@@ -826,10 +914,7 @@ fun AddContactScreen(
                             imeAction     = ImeAction.Next,
                             onNext        = { focusManager.moveFocus(FocusDirection.Down) },
                         )
-
                         HorizontalDivider(color = EcCardBorder, thickness = 0.5.dp)
-
-                        // Relation field
                         EcFormField(
                             value         = relation,
                             onValueChange = { relation = it },
@@ -842,7 +927,6 @@ fun AddContactScreen(
                     }
                 }
 
-                // ── Required note ─────────────────────────────────────────────
                 item {
                     Text(
                         "Name and phone number are required.",
@@ -853,7 +937,7 @@ fun AddContactScreen(
                     )
                 }
 
-                // ── Save button ───────────────────────────────────────────────
+                // ── Save CTA ──────────────────────────────────────────────────
                 item {
                     Box(
                         modifier = Modifier
@@ -861,14 +945,7 @@ fun AddContactScreen(
                             .padding(horizontal = 16.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(if (canSave) EcGreen else EcCardBorder)
-                            .clickable(enabled = canSave) {
-                                nameError  = name.isBlank()
-                                phoneError = phone.length < 7
-                                if (!nameError && !phoneError) {
-                                    vm.addContact(name, phone, relation)
-                                    navController.popBackStack()
-                                }
-                            }
+                            .clickable(enabled = canSave, onClick = onSave)
                             .padding(vertical = 17.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -896,7 +973,14 @@ fun AddContactScreen(
     }
 }
 
-// ─── Flat form field (no OutlinedTextField border box) ────────────────────────
+// ─── Form Field ───────────────────────────────────────────────────────────────
+
+/**
+ * A borderless flat form field used inside [AddContactScreen]'s card.
+ * The field has no `OutlinedTextField` border — the surrounding card
+ * provides the visual container. Error state is surfaced via the icon
+ * background and an inline error message below the field.
+ */
 @Composable
 private fun EcFormField(
     value: String,
@@ -930,10 +1014,10 @@ private fun EcFormField(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 label,
-                fontFamily = PlusJakartaSans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize   = 11.sp,
-                color      = if (isError) EcRed else EcTextHint,
+                fontFamily    = PlusJakartaSans,
+                fontWeight    = FontWeight.SemiBold,
+                fontSize      = 11.sp,
+                color         = if (isError) EcRed else EcTextHint,
                 letterSpacing = 0.3.sp,
             )
             TextField(
@@ -976,9 +1060,19 @@ private fun EcFormField(
     }
 }
 
-// ─── Dial helper ──────────────────────────────────────────────────────────────
+// ─── Dial Helper ──────────────────────────────────────────────────────────────
+
+/**
+ * Opens the system dialler pre-filled with [number].
+ * Uses ACTION_DIAL (not ACTION_CALL) so the user must confirm the call —
+ * this is intentional for safety screens where accidental dials must be
+ * avoided. Strips spaces and hyphens before dialling.
+ */
 fun dialNumber(context: Context, number: String) {
     context.startActivity(
-        Intent(Intent.ACTION_DIAL, Uri.parse("tel:${number.replace(" ", "").replace("-", "")}"))
+        Intent(
+            Intent.ACTION_DIAL,
+            Uri.parse("tel:${number.replace(" ", "").replace("-", "")}")
+        )
     )
 }

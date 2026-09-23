@@ -1,13 +1,20 @@
 package com.example.namastays.screens
 
 import android.net.Uri
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,7 +30,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,8 +44,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.namastays.R
-import kotlinx.coroutines.launch
+import com.example.namastays.api.ApiClient
+import com.example.namastays.trek.util.toCloudinaryThumbnail
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlin.math.abs
 
 val PlusJakartaSans = FontFamily(
     Font(R.font.plusjakartasans, FontWeight.Normal)
@@ -72,7 +89,8 @@ val ToursIconColor = Color(0xFFEA580C)
 data class Destination(
     val name: String,
     val tagline: String,
-    val gradientColors: List<Color>
+    val gradientColors: List<Color>,
+    val imageUrl: String = "",
 )
 
 data class Category(
@@ -86,14 +104,6 @@ data class BottomNavItem(
     val label: String,
     val icon: ImageVector,
     val selectedIcon: ImageVector
-)
-
-// ─── Sample Data ──────────────────────────────────────────────────────────────
-val sampleDestinations = listOf(
-    Destination("Pokhara, Nepal",   "Lakeside peace awaits",         listOf(Color(0xFF2D6A4F), Color(0xFF1B4332))),
-    Destination("Mustang, Nepal",   "Adventure in the mountains",    listOf(Color(0xFF8D5A2B), Color(0xFF5A3E1B))),
-    Destination("Kathmandu, Nepal", "Culture, heritage & city life", listOf(Color(0xFF6D2B3D), Color(0xFFB5838D))),
-    Destination("Chitwan, Nepal",   "Wildlife and jungle escapes",   listOf(Color(0xFF264653), Color(0xFF2A9D8F)))
 )
 
 val sampleCategories = listOf(
@@ -121,19 +131,40 @@ fun shimmerBrush(): Brush {
     )
 }
 
+// ─── Fallback gradient palette (cycled through for cards from the API) ───────
+val fallbackGradients = listOf(
+    listOf(Color(0xFF2D6A4F), Color(0xFF1B4332)),
+    listOf(Color(0xFF8D5A2B), Color(0xFF5A3E1B)),
+    listOf(Color(0xFF6D2B3D), Color(0xFFB5838D)),
+    listOf(Color(0xFF264653), Color(0xFF2A9D8F))
+)
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 @Composable
 fun HomeScreen(navController: NavController) {
-    val listState      = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
 
-    val selectedDotIndex by remember {
-        derivedStateOf {
-            val firstVisible = listState.firstVisibleItemIndex
-            val offset       = listState.firstVisibleItemScrollOffset
-            if (offset > 730) firstVisible + 1 else firstVisible
-        }
+    var destinations by remember { mutableStateOf<List<Destination>?>(null) } // null = still loading
+    var loadFailed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        runCatching { ApiClient.cityApi.getCities() }
+            .onSuccess { cities ->
+                destinations = cities.mapIndexed { i, city ->
+                    Destination(
+                        name = city.name,
+                        tagline = city.state.orEmpty(),
+                        imageUrl = city.imageUrl.orEmpty(),
+                        gradientColors = fallbackGradients[i % fallbackGradients.size]
+                    )
+                }
+            }
+            .onFailure {
+                loadFailed = true
+            }
     }
+
+    val listState = rememberLazyListState()
+    var activeIndex by remember { mutableIntStateOf(0) }
 
     LazyColumn(
         modifier = Modifier
@@ -141,7 +172,7 @@ fun HomeScreen(navController: NavController) {
             .background(BackgroundColor)
     ) {
         item(key = "topbar") {
-            TopBar()
+            TopBar(navController)
         }
 
         item(key = "search") {
@@ -165,15 +196,36 @@ fun HomeScreen(navController: NavController) {
         }
 
         item(key = "featured_row") {
-            FeaturedDestinationsRow(
-                destinations  = sampleDestinations,
-                listState     = listState,
-                selectedDot   = selectedDotIndex,
-                onDotSelected = { index ->
-                    coroutineScope.launch { listState.animateScrollToItem(index) }
-                },
-                navController = navController
-            )
+            when {
+                destinations == null && !loadFailed -> {
+                    FeaturedDestinationsSkeleton()
+                }
+                loadFailed || destinations.isNullOrEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(210.dp)
+                            .padding(horizontal = 20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text       = "Couldn't load destinations",
+                            fontFamily = PlusJakartaSans,
+                            color      = SecondaryText,
+                            fontSize   = 14.sp
+                        )
+                    }
+                }
+                else -> {
+                    FeaturedDestinationsRow(
+                        destinations   = destinations!!,
+                        listState      = listState,
+                        activeIndex    = activeIndex,
+                        onActiveChange = { activeIndex = it },
+                        navController  = navController
+                    )
+                }
+            }
         }
 
         item(key = "categories_header") {
@@ -198,7 +250,7 @@ fun HomeScreen(navController: NavController) {
 
 // ─── Top Bar ─────────────────────────────────────────────────────────────────
 @Composable
-fun TopBar() {
+fun TopBar(navController: NavController) {
     Row(
         modifier              = Modifier
             .fillMaxWidth()
@@ -229,7 +281,10 @@ fun TopBar() {
                 modifier         = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFE0E7FF)),
+                    .background(Color(0xFFE0E7FF))
+                    .clickable {
+                        navController.navigate("profile") { launchSingleTop = true }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -380,24 +435,79 @@ fun SectionHeader(
 }
 
 // ─── Featured Destinations Row ────────────────────────────────────────────────
+private val CardWidth = 260.dp
 @Composable
 fun FeaturedDestinationsRow(
-    destinations  : List<Destination>,
-    listState     : androidx.compose.foundation.lazy.LazyListState,
-    selectedDot   : Int,
-    onDotSelected : (Int) -> Unit,
-    navController : NavController
+    destinations   : List<Destination>,
+    listState      : LazyListState,
+    activeIndex    : Int,
+    onActiveChange : (Int) -> Unit,
+    navController  : NavController
 ) {
+    val isDragged by listState.interactionSource.collectIsDraggedAsState()
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+
+    // Autoplay: advance every 3.5s, paused while the user is dragging
+    LaunchedEffect(destinations.size, isDragged, activeIndex) {
+        if (isDragged || destinations.size < 2) return@LaunchedEffect
+        delay(3500)
+        onActiveChange((activeIndex + 1) % destinations.size)
+    }
+
+    // Smooth eased slide to the active card
+    LaunchedEffect(activeIndex) {
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == activeIndex }
+        if (item != null) {
+//            listState.animateScrollBy(
+//                value = (item.offset + info.viewportStartOffset).toFloat(),
+//                animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing)
+//            )
+
+            listState.animateScrollBy(
+                value = item.offset.toFloat(),
+                animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing)
+            )
+
+        } else {
+            listState.animateScrollToItem(activeIndex)
+        }
+    }
+
+    // After a manual swipe, activate the card closest to the start edge
+    LaunchedEffect(listState) {
+        snapshotFlow { isDragged }.collect { dragging ->
+            if (!dragging) {
+                snapshotFlow { listState.isScrollInProgress }.first { !it }
+                //val info = listState.layoutInfo
+//                val idx = info.visibleItemsInfo
+//                    .minByOrNull { abs(it.offset + info.viewportStartOffset) }?.index
+//                    ?: listState.firstVisibleItemIndex
+
+
+                val idx = listState.layoutInfo.visibleItemsInfo
+                    .minByOrNull { abs(it.offset) }?.index
+                    ?: listState.firstVisibleItemIndex
+
+                onActiveChange(idx.coerceIn(0, destinations.lastIndex))
+            }
+        }
+    }
+
     Column {
         LazyRow(
             state                 = listState,
-            contentPadding        = PaddingValues(horizontal = 20.dp),
+            // Lets the last card scroll fully to the start edge
+            contentPadding        = PaddingValues(
+                start = 20.dp,
+                end   = (screenWidth - CardWidth - 20.dp).coerceAtLeast(20.dp)
+            ),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(destinations, key = { it.name }) { destination ->
+            itemsIndexed(destinations, key = { _, d -> d.name }) { index, destination ->
                 DestinationCard(
                     destination = destination,
-                    isLarge     = destination == destinations.first(),
+                    isLarge     = index == activeIndex,
                     onClick     = {
                         val cityName = Uri.encode(destination.name.substringBefore(",").trim())
                         navController.navigate("search_results/$cityName") { launchSingleTop = true }
@@ -414,17 +524,61 @@ fun FeaturedDestinationsRow(
             verticalAlignment     = Alignment.CenterVertically
         ) {
             destinations.forEachIndexed { i, _ ->
-                val isSelected = i == selectedDot
-                // Static values — no dp/color animation on dot selection.
-                val dotWidth = if (isSelected) 24.dp else 7.dp
-                val dotColor = if (isSelected) AccentBlue else Color(0xFFD1D5DB)
+                val isSelected = i == activeIndex
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 3.dp)
+                        .size(if (isSelected) 24.dp else 7.dp, 7.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (isSelected) AccentBlue else Color(0xFFD1D5DB))
+                        .clickable { onActiveChange(i) }
+                )
+            }
+        }
+    }
+}
+
+// ─── Featured Destinations Skeleton ───────────────────────────────────────────
+@Composable
+fun FeaturedDestinationsSkeleton() {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            repeat(2) { i ->
+                val scale = if (i == 0) 1f else 0.9f
+                Box(
+                    modifier = Modifier
+                        .width(CardWidth)
+                        .height(210.dp)
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                        }
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(shimmerBrush())
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment     = Alignment.CenterVertically
+        ) {
+            repeat(2) { i ->
+                val dotWidth = if (i == 0) 24.dp else 7.dp
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 3.dp)
                         .size(dotWidth, 7.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(dotColor)
-                        .clickable { onDotSelected(i) }
+                        .background(Color(0xFFD1D5DB))
                 )
             }
         }
@@ -438,15 +592,20 @@ fun DestinationCard(
     isLarge     : Boolean = false,
     onClick     : () -> Unit
 ) {
-    val cardWidth  = if (isLarge) 288.dp else 170.dp
-    val cardHeight = 210.dp
+    val spec = tween<Float>(durationMillis = 700, easing = FastOutSlowInEasing)
+    val scale by animateFloatAsState(if (isLarge) 1f else 0.9f, spec, label = "scale")
+    val infoAlpha by animateFloatAsState(if (isLarge) 1f else 0f, spec, label = "infoAlpha")
 
     val interactionSource = remember { MutableInteractionSource() }
 
     Box(
         modifier = Modifier
-            .width(cardWidth)
-            .height(cardHeight)
+            .width(CardWidth)
+            .height(210.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .shadow(
                 elevation = 8.dp,
                 shape     = RoundedCornerShape(20.dp),
@@ -460,6 +619,18 @@ fun DestinationCard(
                 onClick           = onClick
             )
     ) {
+        if (destination.imageUrl.isNotBlank()) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(destination.imageUrl.toCloudinaryThumbnail(width = 500))
+                    .crossfade(true)
+                    .build(),
+                contentDescription = destination.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize()
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -475,16 +646,20 @@ fun DestinationCard(
         ) {
             Text(
                 text       = destination.name,
-                fontSize   = if (isLarge) 18.sp else 14.sp,
+                fontSize   = 18.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = PlusJakartaSans,
                 color      = Color.White,
                 maxLines   = 1,
                 overflow   = TextOverflow.Ellipsis
             )
-            if (isLarge) {
+            if (destination.tagline.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // Always laid out (so the name never jumps), just faded in and out
+                Row(
+                    modifier = Modifier.graphicsLayer { alpha = infoAlpha },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
                         imageVector        = Icons.Outlined.LocationOn,
                         contentDescription = null,
@@ -519,15 +694,24 @@ fun CategoriesRow(
     ) {
         categories.forEach { category ->
             val onClick: () -> Unit = when (category.label) {
-                "Hotels"         -> {{ navController.navigate("hotels") { launchSingleTop = true } }}
-                "Homestays"      -> {{ navController.navigate("homestays") { launchSingleTop = true } }}
-                "Trip Checklist" -> {{
-                    navController.navigate("packing_checklist") {
-                        launchSingleTop = true
-                        restoreState    = true
-                        popUpTo("home") { saveState = true }
+                "Hotels" -> {
+                    { navController.navigate("hotels") { launchSingleTop = true } }
+                }
+                "Homestays" -> {
+                    { navController.navigate("homestays") { launchSingleTop = true } }
+                }
+                "Trip Checklist" -> {
+                    {
+                        navController.navigate("packing_checklist") {
+                            launchSingleTop = true
+                            restoreState    = true
+                            popUpTo("home") { saveState = true }
+                        }
                     }
-                }}                else             -> {{}}
+                }
+                else -> {
+                    {}
+                }
             }
             CategoryCard(
                 category = category,

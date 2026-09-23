@@ -54,6 +54,14 @@ fun LoginScreen(navController: NavController) {
 
     val uiState by authViewModel.uiState.collectAsStateWithLifecycle()
 
+    // Fires once when uiState becomes Success; RequestNotificationPermission's
+    // own internal LaunchedEffect(Unit) only runs the first time it's
+    // composed, so this doesn't re-request on every recomposition — only
+    // the first time uiState flips to Success.
+    if (uiState is LoginUiState.Success) {
+        com.example.namastays.notification.RequestNotificationPermission()
+    }
+
     LaunchedEffect(uiState) {
         if (uiState is LoginUiState.Success) {
             navController.navigate("home") {

@@ -8,11 +8,11 @@ import android.util.Log
 import androidx.core.graphics.createBitmap
 import com.example.namastays.trek.domain.CustomMarker
 import com.example.namastays.trek.domain.MarkerIconType
+import com.example.namastays.trek.domain.Waypoint
 import com.example.namastays.trek.domain.WaypointType
 import com.example.namastays.trek.util.GpxParser
 import com.example.namastays.trek.util.TrekLocation
 import com.example.namastays.trek.util.WaypointIcons
-import com.example.namastays.trek.util.WaypointParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -35,13 +35,13 @@ class MapLayerManager(private val context: Context) {
     private var gpsDotInitialised = false
     private var routeInitialised = false
 
-    // FIX: track whether the custom-marker layer has been created at least once
-    // so refreshCustomMarkers can call setGeoJson on the existing source instead
-    // of tearing down and rebuilding the layer on every marker add/delete.
+    // Tracks whether the custom-marker layer has been created at least once,
+    // so refreshCustomMarkers can call setGeoJson on the existing source
+    // instead of tearing down and rebuilding the layer on every marker add/delete.
     private var customMarkersLayerInitialised = false
 
-    // FIX: throttle accuracy circle updates — expensive to recalculate at GPS
-    // rate in browse mode; update at most once per second.
+    // Throttles accuracy-circle updates — expensive to recalculate at GPS
+    // rate in browse mode; updated at most once per second.
     private var lastAccuracyUpdateMs = 0L
 
     // ─── Route ────────────────────────────────────────────────────────────────
@@ -185,8 +185,8 @@ class MapLayerManager(private val context: Context) {
         gpsDotInitialised = true
     }
 
-    // FIX: throttle accuracy circle to at most once per second. The dot itself
-    // is still updated on every location event (cheap — single GeoJSON point).
+    // Throttles the accuracy circle to at most once per second. The dot
+    // itself still updates on every location event (cheap — single GeoJSON point).
     fun updateGpsDot(style: Style, location: TrekLocation, headingOverride: Float? = null) {
         if (!gpsDotInitialised) return
 
@@ -211,9 +211,21 @@ class MapLayerManager(private val context: Context) {
 
     // ─── Waypoints ────────────────────────────────────────────────────────────
 
-    suspend fun loadWaypoints(map: MapLibreMap, trekId: String) {
-        val waypoints = withContext(Dispatchers.IO) { WaypointParser.parse(context, trekId) }
-        if (waypoints.isEmpty()) { Log.d("MapLayerManager", "No waypoints for $trekId"); return }
+    /**
+     * Renders [waypoints] onto the map's waypoints layer.
+     *
+     * CHANGED: previously this function called `WaypointParser.parse()`
+     * itself, duplicating the parse that TrekMapViewModel already performs
+     * and stores in `TrekMapUiState.waypoints` — meaning the waypoints JSON
+     * file was read and parsed twice per screen load for no benefit, since
+     * the ViewModel is the single source of truth for that data. Callers
+     * now pass the already-parsed list from ViewModel state.
+     */
+    suspend fun loadWaypoints(map: MapLibreMap, waypoints: List<Waypoint>) {
+        if (waypoints.isEmpty()) {
+            Log.d("MapLayerManager", "No waypoints to render")
+            return
+        }
 
         withContext(Dispatchers.Main) {
             val mapStyle = map.style ?: return@withContext
@@ -252,12 +264,11 @@ class MapLayerManager(private val context: Context) {
 
     // ─── Custom markers ───────────────────────────────────────────────────────
 
-    // FIX: on the first call (or after a style reload) we build the source and
-    // layer from scratch. On subsequent calls we reuse the existing source and
-    // just swap the GeoJSON — no layer teardown, no one-frame flash.
+    // On the first call (or after a style reload) this builds the source and
+    // layer from scratch. On subsequent calls it reuses the existing source
+    // and just swaps the GeoJSON — no layer teardown, no one-frame flash.
     fun refreshCustomMarkers(style: Style, markers: List<CustomMarker>) {
         if (!customMarkersLayerInitialised) {
-            // First-time or post-style-reload: full initialisation
             removeLayerSafe(style, "custom-markers-layer")
             removeSourceSafe(style, "custom-markers-source")
 
@@ -282,7 +293,6 @@ class MapLayerManager(private val context: Context) {
             }
             customMarkersLayerInitialised = true
         } else {
-            // Layer already exists — just update the data, no layer flash
             val features = markers.map { it.toFeature() }
             (style.getSource("custom-markers-source") as? GeoJsonSource)
                 ?.setGeoJson(FeatureCollection.fromFeatures(features))
@@ -373,14 +383,12 @@ class MapLayerManager(private val context: Context) {
     fun onStyleReloaded() {
         gpsDotInitialised = false
         routeInitialised = false
-        // FIX: reset custom marker flag so refreshCustomMarkers rebuilds the
-        // layer from scratch after a style reload (old layer is gone).
         customMarkersLayerInitialised = false
         lastAccuracyUpdateMs = 0L
     }
 
-    // Called from dead-reckoning loop at ~60 fps — only updates the dot symbol,
-    // not the accuracy circle (too expensive at that rate).
+    // Called from the dead-reckoning loop at ~60 fps — only updates the dot
+    // symbol, not the accuracy circle (too expensive at that rate).
     fun updateGpsDotDirect(style: Style, lat: Double, lng: Double, bearing: Float) {
         if (!gpsDotInitialised) return
         val dotFeature = Feature.fromGeometry(

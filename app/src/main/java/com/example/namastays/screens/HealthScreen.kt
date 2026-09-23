@@ -25,8 +25,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.namastays.ui.theme.AccentBlue
+import com.example.namastays.ui.theme.PlusJakartaSans
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
+// Private to this file — LLS-specific shades. AccentBlue is imported from
+// ui.theme.Color rather than redeclared here, since it's the single shared
+// indigo token used across the whole app.
 private val LlPageBg      = Color(0xFFF7F8FA)
 private val LlCardBg      = Color(0xFFFFFFFF)
 private val LlCardBorder  = Color(0xFFE5E7EB)
@@ -36,12 +41,27 @@ private val LlTextHint    = Color(0xFF9CA3AF)
 private val LlSelectedBg  = Color(0xFF111827)
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A single Lake Louise Score question with its label, icon, and answer options.
+ * Options are ordered 0–3 and each option's index IS its score contribution.
+ */
 data class LLSQuestion(
     val label: String,
     val icon: ImageVector,
     val options: List<String>,
 )
 
+/**
+ * The five Lake Louise Score questions, as per the validated clinical standard.
+ * Each question contributes 0–3 points; total ranges from 0–15.
+ *
+ * Clinical thresholds:
+ *   0–2   → No AMS
+ *   3–5   → Mild AMS (rest & monitor)
+ *   6–9   → Moderate AMS (do not ascend)
+ *   10–15 → Severe AMS (descend immediately)
+ */
 private val llsQuestions = listOf(
     LLSQuestion(
         label   = "Headache",
@@ -72,56 +92,71 @@ private val llsQuestions = listOf(
 
 private const val MAX_SCORE = 15
 
-// ─── Result model ──────────────────────────────────────────────────────────────
+// ─── Result Model ──────────────────────────────────────────────────────────────
+
+/**
+ * Encapsulates the visual + textual outcome of an LLS assessment.
+ * Constructed once by [evaluateScore] — not allocated per recomposition.
+ */
 private data class LLSResult(
-    val tag: String,
-    val label: String,
-    val advice: String,
-    val accentColor: Color,
-    val bgColor: Color,
-    val borderColor: Color,
+    val tag          : String,
+    val label        : String,
+    val advice       : String,
+    val accentColor  : Color,
+    val bgColor      : Color,
+    val borderColor  : Color,
     val progressColor: Color,
 )
 
+/**
+ * Maps a raw [score] to a clinical AMS severity level with UX-ready
+ * colour and text values. Uses the validated Lake Louise Score thresholds.
+ */
 private fun evaluateScore(score: Int): LLSResult = when {
     score >= 10 -> LLSResult(
-        tag          = "Descend Immediately",
-        label        = "Severe AMS — Score $score / $MAX_SCORE",
-        advice       = "Immediate descent is required. Do not continue ascending. Seek emergency medical attention now — use your SOS feature if needed.",
-        accentColor  = Color(0xFFD32F2F),
-        bgColor      = Color(0xFFFFF5F5),
-        borderColor  = Color(0xFFFFCDD2),
+        tag           = "Descend Immediately",
+        label         = "Severe AMS — Score $score / $MAX_SCORE",
+        advice        = "Immediate descent is required. Do not continue ascending. Seek emergency medical attention now — use your SOS feature if needed.",
+        accentColor   = Color(0xFFD32F2F),
+        bgColor       = Color(0xFFFFF5F5),
+        borderColor   = Color(0xFFFFCDD2),
         progressColor = Color(0xFFD32F2F),
     )
     score >= 6 -> LLSResult(
-        tag          = "Do Not Ascend",
-        label        = "Moderate AMS — Score $score / $MAX_SCORE",
-        advice       = "Rest at your current altitude. Do not go higher. If symptoms do not improve within 24 hours, descend immediately.",
-        accentColor  = Color(0xFFE65100),
-        bgColor      = Color(0xFFFFF8F0),
-        borderColor  = Color(0xFFFFCCBC),
+        tag           = "Do Not Ascend",
+        label         = "Moderate AMS — Score $score / $MAX_SCORE",
+        advice        = "Rest at your current altitude. Do not go higher. If symptoms do not improve within 24 hours, descend immediately.",
+        accentColor   = Color(0xFFE65100),
+        bgColor       = Color(0xFFFFF8F0),
+        borderColor   = Color(0xFFFFCCBC),
         progressColor = Color(0xFFE65100),
     )
     score >= 3 -> LLSResult(
-        tag          = "Rest & Monitor",
-        label        = "Mild AMS — Score $score / $MAX_SCORE",
-        advice       = "Rest and hydrate at your current altitude. Monitor closely. Do not ascend until all symptoms fully resolve.",
-        accentColor  = Color(0xFFF57F17),
-        bgColor      = Color(0xFFFFFDE7),
-        borderColor  = Color(0xFFFFF176),
+        tag           = "Rest & Monitor",
+        label         = "Mild AMS — Score $score / $MAX_SCORE",
+        advice        = "Rest and hydrate at your current altitude. Monitor closely. Do not ascend until all symptoms fully resolve.",
+        accentColor   = Color(0xFFF57F17),
+        bgColor       = Color(0xFFFFFDE7),
+        borderColor   = Color(0xFFFFF176),
         progressColor = Color(0xFFF57F17),
     )
     else -> LLSResult(
-        tag          = "All Clear",
-        label        = "No AMS — Score $score / $MAX_SCORE",
-        advice       = "No significant AMS symptoms detected. Stay well hydrated, ascend gradually, and continue monitoring your condition.",
-        accentColor  = Color(0xFF2E7D32),
-        bgColor      = Color(0xFFF1F8E9),
-        borderColor  = Color(0xFFC5E1A5),
+        tag           = "All Clear",
+        label         = "No AMS — Score $score / $MAX_SCORE",
+        advice        = "No significant AMS symptoms detected. Stay well hydrated, ascend gradually, and continue monitoring your condition.",
+        accentColor   = Color(0xFF2E7D32),
+        bgColor       = Color(0xFFF1F8E9),
+        borderColor   = Color(0xFFC5E1A5),
         progressColor = Color(0xFF22C55E),
     )
 }
 
+/**
+ * Returns the progress bar colour appropriate for the current live [score]
+ * while the user is still answering questions (before tapping "Calculate").
+ * Uses [AccentBlue] for scores of 0 so the bar doesn't look alarming until
+ * the user has answered enough questions to have a meaningful reading.
+ */
 private fun progressColorForScore(score: Int): Color = when {
     score >= 10 -> Color(0xFFD32F2F)
     score >= 6  -> Color(0xFFE65100)
@@ -130,12 +165,26 @@ private fun progressColorForScore(score: Int): Color = when {
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
+
+/**
+ * The Lake Louise Score AMS checker screen.
+ *
+ * Presents five questions with four options each (score 0–3 per question).
+ * A live progress card updates as questions are answered. The "Calculate"
+ * CTA is enabled only when all five questions have been answered, then
+ * shows a [ResultCard] with clinical guidance.
+ *
+ * All question scores are held in a [mutableStateListOf] so individual
+ * answer changes cause only the affected question card and the progress
+ * card to recompose — not the entire list.
+ */
 @Composable
 fun LakeLouiseScreen(navController: NavController) {
-    val scores     = remember { mutableStateListOf(*IntArray(llsQuestions.size) { -1 }.toTypedArray()) }
-    var showResult by remember { mutableStateOf(false) }
+    // scores[i] = -1 means unanswered; 0–3 is the selected option index.
+    val scores       = remember { mutableStateListOf(*IntArray(llsQuestions.size) { -1 }.toTypedArray()) }
+    var showResult   by remember { mutableStateOf(false) }
 
-    val allAnswered  = scores.none { it == -1 }
+    val allAnswered   = scores.none { it == -1 }
     val answeredCount = scores.count { it >= 0 }
     val currentScore  = scores.filter { it >= 0 }.sum()
 
@@ -145,9 +194,13 @@ fun LakeLouiseScreen(navController: NavController) {
             .background(LlPageBg)
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier       = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 20.dp, end = 20.dp, top = 10.dp, bottom = 110.dp
+                start  = 20.dp,
+                end    = 20.dp,
+                top    = 10.dp,
+                // Extra bottom padding to clear the floating CTA button.
+                bottom = 110.dp
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -156,7 +209,7 @@ fun LakeLouiseScreen(navController: NavController) {
                 ScreenHeader("AMS Checker", onBack = { navController.popBackStack() })
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "Assess your symptoms using the Lake Louise Scoring System. Select the intensity that best describes your current state.",
+                    text       = "Assess your symptoms using the Lake Louise Scoring System. Select the intensity that best describes your current state.",
                     fontFamily = PlusJakartaSans,
                     fontSize   = 13.sp,
                     color      = LlTextMuted,
@@ -165,7 +218,7 @@ fun LakeLouiseScreen(navController: NavController) {
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ── Disclaimer ─────────────────────────────────────────────────────
+            // ── Medical disclaimer ─────────────────────────────────────────────
             item {
                 Row(
                     modifier = Modifier
@@ -181,7 +234,9 @@ fun LakeLouiseScreen(navController: NavController) {
                         imageVector        = Icons.Outlined.Info,
                         contentDescription = null,
                         tint               = Color(0xFF4338CA),
-                        modifier           = Modifier.size(16.dp).padding(top = 1.dp),
+                        modifier           = Modifier
+                            .size(16.dp)
+                            .padding(top = 1.dp),
                     )
                     Text(
                         text       = "The Lake Louise Score is a validated clinical standard for AMS assessment. It does not replace professional medical evaluation or diagnosis.",
@@ -193,12 +248,12 @@ fun LakeLouiseScreen(navController: NavController) {
                 }
             }
 
-            // ── Progress card ──────────────────────────────────────────────────
+            // ── Live score progress card ───────────────────────────────────────
             item {
                 val animatedProgress by animateFloatAsState(
                     targetValue   = currentScore / MAX_SCORE.toFloat(),
                     animationSpec = tween(durationMillis = 400),
-                    label         = "progress",
+                    label         = "lls_progress",
                 )
                 val progressColor = progressColorForScore(currentScore)
 
@@ -253,7 +308,10 @@ fun LakeLouiseScreen(navController: NavController) {
                     }
                     LinearProgressIndicator(
                         progress      = { animatedProgress },
-                        modifier      = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(99.dp)),
+                        modifier      = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(99.dp)),
                         color         = progressColor,
                         trackColor    = Color(0xFFF3F4F6),
                         strokeCap     = StrokeCap.Round,
@@ -272,23 +330,24 @@ fun LakeLouiseScreen(navController: NavController) {
             // ── Questions ──────────────────────────────────────────────────────
             itemsIndexed(llsQuestions) { qIdx, question ->
                 QuestionCard(
-                    question      = question,
+                    question       = question,
                     questionNumber = qIdx + 1,
-                    selectedIndex = scores[qIdx],
-                    onSelect      = { optIdx ->
+                    selectedIndex  = scores[qIdx],
+                    onSelect       = { optIdx ->
                         scores[qIdx] = optIdx
+                        // Clear the result card when an answer changes so the
+                        // displayed result is always in sync with current answers.
                         showResult = false
                     },
                 )
             }
 
-            // ── Result ─────────────────────────────────────────────────────────
+            // ── Result card (shown after Calculate is tapped) ──────────────────
             if (showResult && allAnswered) {
                 item {
-                    val result = evaluateScore(currentScore)
                     ResultCard(
-                        result = result,
-                        score  = currentScore,
+                        result  = evaluateScore(currentScore),
+                        score   = currentScore,
                         onReset = {
                             for (i in scores.indices) scores[i] = -1
                             showResult = false
@@ -299,6 +358,9 @@ fun LakeLouiseScreen(navController: NavController) {
         }
 
         // ── Floating CTA ──────────────────────────────────────────────────────
+        // Overlaid at the bottom of the screen. Uses a vertical gradient
+        // behind it so the list content fades out cleanly instead of being
+        // hard-clipped by the button.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -325,10 +387,15 @@ fun LakeLouiseScreen(navController: NavController) {
                 ),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
             ) {
-                Icon(imageVector = Icons.Outlined.Calculate, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(
+                    imageVector        = Icons.Outlined.Calculate,
+                    contentDescription = null,
+                    modifier           = Modifier.size(18.dp)
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text       = if (allAnswered) "Calculate Score" else "Answer all questions to continue",
+                    text       = if (allAnswered) "Calculate Score"
+                    else "Answer all questions to continue",
                     fontFamily = PlusJakartaSans,
                     fontWeight = FontWeight.Bold,
                     fontSize   = if (allAnswered) 15.sp else 13.sp,
@@ -338,15 +405,23 @@ fun LakeLouiseScreen(navController: NavController) {
     }
 }
 
-// ─── Question card ─────────────────────────────────────────────────────────────
+// ─── Question Card ─────────────────────────────────────────────────────────────
+
+/**
+ * A single LLS question card with four tappable [OptionTile]s.
+ *
+ * The card border changes to an indigo tint when answered, giving the user
+ * clear visual progress feedback without relying only on the progress card.
+ */
 @Composable
 private fun QuestionCard(
-    question: LLSQuestion,
+    question      : LLSQuestion,
     questionNumber: Int,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
+    selectedIndex : Int,
+    onSelect      : (Int) -> Unit,
 ) {
     val isAnswered = selectedIndex >= 0
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -393,6 +468,8 @@ private fun QuestionCard(
                     color      = LlTextHint,
                 )
             }
+            // Green tick when answered — gives at-a-glance progress without
+            // requiring the user to scroll to the progress card.
             if (isAnswered) {
                 Box(
                     modifier = Modifier
@@ -401,7 +478,12 @@ private fun QuestionCard(
                         .background(Color(0xFF22C55E)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Outlined.Check, contentDescription = "Answered", tint = Color.White, modifier = Modifier.size(13.dp))
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = "Answered",
+                        tint     = Color.White,
+                        modifier = Modifier.size(13.dp)
+                    )
                 }
             }
         }
@@ -423,14 +505,19 @@ private fun QuestionCard(
     }
 }
 
-// ─── Option tile ───────────────────────────────────────────────────────────────
+// ─── Option Tile ───────────────────────────────────────────────────────────────
+
+/**
+ * A single tappable answer tile within a [QuestionCard].
+ * Displays the numeric score (0–3) prominently and the label below.
+ */
 @Composable
 private fun OptionTile(
     modifier: Modifier,
-    number: Int,
-    label: String,
+    number  : Int,
+    label   : String,
     selected: Boolean,
-    onClick: () -> Unit,
+    onClick : () -> Unit,
 ) {
     val bg     = if (selected) LlSelectedBg else LlCardBg
     val border = if (selected) LlSelectedBg else LlCardBorder
@@ -468,7 +555,12 @@ private fun OptionTile(
     }
 }
 
-// ─── Result card ───────────────────────────────────────────────────────────────
+// ─── Result Card ───────────────────────────────────────────────────────────────
+
+/**
+ * Displays the LLS result with the clinical severity tag, score, advice,
+ * and a "Re-assess" button that clears all answers.
+ */
 @Composable
 private fun ResultCard(result: LLSResult, score: Int, onReset: () -> Unit) {
     Column(
@@ -480,7 +572,7 @@ private fun ResultCard(result: LLSResult, score: Int, onReset: () -> Unit) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Tag pill
+        // Severity tag pill
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(20.dp))
@@ -497,7 +589,7 @@ private fun ResultCard(result: LLSResult, score: Int, onReset: () -> Unit) {
             )
         }
 
-        // Score + label
+        // Large score numeral + label
         Row(
             verticalAlignment     = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -529,6 +621,7 @@ private fun ResultCard(result: LLSResult, score: Int, onReset: () -> Unit) {
 
         HorizontalDivider(color = result.borderColor, thickness = 1.dp)
 
+        // Clinical advice text
         Text(
             text       = result.advice,
             fontFamily = PlusJakartaSans,
@@ -539,7 +632,7 @@ private fun ResultCard(result: LLSResult, score: Int, onReset: () -> Unit) {
 
         HorizontalDivider(color = result.borderColor, thickness = 1.dp)
 
-        // Reset button
+        // Re-assess button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -551,7 +644,12 @@ private fun ResultCard(result: LLSResult, score: Int, onReset: () -> Unit) {
             horizontalArrangement = Arrangement.Center,
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Outlined.Refresh, contentDescription = null, tint = result.accentColor, modifier = Modifier.size(16.dp))
+            Icon(
+                Icons.Outlined.Refresh,
+                contentDescription = null,
+                tint     = result.accentColor,
+                modifier = Modifier.size(16.dp)
+            )
             Spacer(Modifier.width(6.dp))
             Text(
                 "Re-assess",

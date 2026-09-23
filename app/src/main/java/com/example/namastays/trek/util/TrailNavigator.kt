@@ -1,11 +1,8 @@
 package com.example.namastays.trek.util
 
 import org.maplibre.geojson.Point
-import kotlin.math.abs
-import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
-import kotlin.math.min
 import kotlin.math.sin
 
 data class NavigationState(
@@ -44,10 +41,9 @@ object TrailNavigator {
     /**
      * Main navigation state calculator. Call on every location update.
      *
-     * [totalTrailDistance] must be passed in pre-computed by the caller
-     * (e.g. cached in ViewModel after route loads). Computing it here on every
-     * GPS fix would iterate all N GPX points at ~1 Hz — O(N) per second for
-     * a constant value.
+     * [totalTrailDistance] must be pre-computed by the caller (cached in the
+     * ViewModel after route load) — computing it here on every GPS fix would
+     * iterate all N GPX points at ~1 Hz for a constant value.
      *
      * Distance covered is computed incrementally from [previousState] rather
      * than re-summing from index 0 every fix, cutting per-fix work from O(N)
@@ -63,8 +59,8 @@ object TrailNavigator {
         totalTrailDistance: Float = 0f   // pre-computed by caller; 0 = fallback to full scan
     ): NavigationState {
 
-        // ── FIX: guard at the very top — before any helper calls that would
-        // crash or produce nonsense on an empty point list.
+        // Guard at the very top — before any helper calls that would crash or
+        // produce nonsense on an empty point list.
         if (gpxPoints.isEmpty()) {
             return NavigationState(
                 currentLocation   = location,
@@ -78,26 +74,40 @@ object TrailNavigator {
             )
         }
 
-        // ── Find nearest trail point inside a forward-biased search window.
+        // Find nearest trail point inside a forward-biased search window.
         val nearestIndex = findNearestPointIndex(
             location      = location,
             gpxPoints     = gpxPoints,
             previousIndex = previousState?.nearestPointIndex ?: 0
         )
 
-        // ── Snap + smooth location before using it for any distance checks.
-        val snappedLocation = TrailSnapper.snapToTrail(
-            location          = location,
-            gpxPoints         = gpxPoints,
-            nearestPointIndex = nearestIndex
+        // Project onto the trail's line segments (not just the nearest vertex)
+        // once, and reuse that same projected point for both (a) the snapped
+        // display location and (b) the off-trail distance check below — these
+        // used to disagree, since distanceToTrail was measured against the
+        // raw vertex while the displayed dot was snapped to the segment
+        // projection. On sparse GPX files with widely-spaced points, that
+        // mismatch could report a larger "distance to trail" than reality,
+        // firing OFF_TRAIL_WARNING for a hiker who was, in fact, exactly on
+        // the line between two points.
+        val projectedPoint = TrailSnapper.nearestPointOnTrail(location, gpxPoints, nearestIndex)
+        val distanceToProjected = LocationTracker.distanceBetween(
+            location.latitude, location.longitude,
+            projectedPoint.latitude(), projectedPoint.longitude()
         )
+        val snappedLocation = if (distanceToProjected <= TrailSnapper.SNAP_THRESHOLD_METERS) {
+            location.copy(latitude = projectedPoint.latitude(), longitude = projectedPoint.longitude())
+        } else {
+            location
+        }
+
         val effectiveBearing = if (location.speed < 1.0f)
             TrailSnapper.getTrailBearing(gpxPoints, nearestIndex)
         else
             location.bearing
         val locationToUse = snappedLocation.copy(bearing = effectiveBearing)
 
-        // ── IN_VEHICLE: preserve all previous distances so progress isn't lost.
+        // IN_VEHICLE: preserve all previous distances so progress isn't lost.
         if (locationToUse.isVehicleSpeed()) {
             return NavigationState(
                 currentLocation   = locationToUse,
@@ -113,7 +123,7 @@ object TrailNavigator {
             )
         }
 
-        // ── POOR_GPS: same — don't reset progress on a bad fix.
+        // POOR_GPS: same — don't reset progress on a bad fix.
         if (locationToUse.quality() == LocationQuality.UNUSABLE) {
             return NavigationState(
                 currentLocation   = locationToUse,
@@ -129,13 +139,11 @@ object TrailNavigator {
             )
         }
 
-        val nearestPoint = gpxPoints[nearestIndex]
-        val distanceToTrail = LocationTracker.distanceBetween(
-            locationToUse.latitude, locationToUse.longitude,
-            nearestPoint.latitude(), nearestPoint.longitude()
-        )
+        // Distance to trail now uses the same segment-projected point used
+        // for snapping — accurate even on long, sparse straight segments.
+        val distanceToTrail = distanceToProjected
 
-        // ── WRONG_LOCATION: only checked on very first fix (previousState == null).
+        // WRONG_LOCATION: only checked on very first fix (previousState == null).
         if (previousState == null) {
             val trailhead = gpxPoints.first()
             val distFromTrailhead = LocationTracker.distanceBetween(
@@ -159,9 +167,9 @@ object TrailNavigator {
             }
         }
 
-        // ── Distance covered: incremental delta from previous state.
-        // Only advances forward — never decreases even if GPS briefly puts
-        // the user behind their last known position.
+        // Distance covered: incremental delta from previous state. Only
+        // advances forward — never decreases even if GPS briefly puts the
+        // user behind their last known position.
         val total = effectiveTotalDistance(gpxPoints, totalTrailDistance)
         val distanceCovered = computeDistanceCovered(
             gpxPoints      = gpxPoints,
@@ -173,8 +181,7 @@ object TrailNavigator {
         val progressPercent   = if (total > 0f)
             (distanceCovered / total * 100f).coerceIn(0f, 100f) else 0f
 
-        // ── COMPLETED: use smoothed location, require meaningful progress.
-        // FIX: was using raw `location` — now uses `locationToUse` so a 40 m
+        // COMPLETED: use smoothed location, require meaningful progress, so a
         // GPS drift near the summit doesn't prevent completion triggering.
         val distanceToEnd = LocationTracker.distanceBetween(
             locationToUse.latitude, locationToUse.longitude,
@@ -193,14 +200,13 @@ object TrailNavigator {
             )
         }
 
-        // ── WRONG_DIRECTION: only when on-trail and actually moving.
-        // FIX 1: was firing while off-trail (nearestIndex oscillates off-trail).
-        // FIX 2: threshold raised to 20 points to tolerate tight switchbacks.
+        // WRONG_DIRECTION: only fires when on-trail and actually moving, with
+        // a wide backward margin to tolerate tight switchbacks.
         val isWrongDirection = previousState != null
                 && distanceCovered > 50f
                 && location.speed > 0.5f
-                && distanceToTrail < OFF_TRAIL_WARNING_METERS   // FIX: on-trail only
-                && nearestIndex < (previousState.nearestPointIndex - 20) // FIX: wider margin
+                && distanceToTrail < OFF_TRAIL_WARNING_METERS
+                && nearestIndex < (previousState.nearestPointIndex - 20)
 
         val status = when {
             distanceToTrail > OFF_TRAIL_CRITICAL_METERS -> NavigationStatus.OFF_TRAIL_CRITICAL
@@ -239,10 +245,10 @@ object TrailNavigator {
     }
 
     // ── Nearest point search ───────────────────────────────────────────────────
-    // FIX: window widened to -5 / +100 (was -3 / +50).
-    // At 2 m/s hiking speed with 10 m GPX point spacing and a 4 s adaptive
-    // emit rate, the user can advance ~80 m = ~8 points between emits.
-    // +100 gives 2× headroom for bursts; -5 allows minor backtracking.
+    // Window is -5 / +100 around the previous index. At 2 m/s hiking speed
+    // with ~10 m GPX point spacing and a 4 s adaptive emit rate, the user can
+    // advance ~80 m = ~8 points between emits. +100 gives 2x headroom for
+    // bursts; -5 allows minor backtracking.
     private fun findNearestPointIndex(
         location: TrekLocation,
         gpxPoints: List<Point>,
@@ -271,20 +277,15 @@ object TrailNavigator {
 
     // ── Distance helpers ───────────────────────────────────────────────────────
 
-    /**
-     * Use the pre-computed total if provided, otherwise fall back to a full
-     * scan. Callers (ViewModel) should cache this after route load.
-     */
     private fun effectiveTotalDistance(
         points: List<Point>,
         preComputed: Float
     ): Float = if (preComputed > 0f) preComputed else calculateTotalDistance(points)
 
     /**
-     * Incremental distance covered: takes the previous covered distance and
-     * adds only the delta from the previous nearest index to the current one.
-     * Never decreases (GPS jitter won't un-do progress).
-     * Falls back to a full sum from 0 on the first fix (previousState == null).
+     * Incremental distance covered: adds only the delta from the previous
+     * nearest index to the current one. Never decreases (GPS jitter won't
+     * undo progress). Falls back to a full sum from 0 on the first fix.
      */
     private fun computeDistanceCovered(
         gpxPoints: List<Point>,
@@ -293,15 +294,12 @@ object TrailNavigator {
         totalDistance: Float
     ): Float {
         if (previousState == null) {
-            // First fix: full sum from start to nearest point.
             return calculateDistanceCovered(gpxPoints, nearestIndex)
         }
         val prevIndex = previousState.nearestPointIndex
         if (nearestIndex <= prevIndex) {
-            // Not advanced (backtrack or stationary) — keep previous value.
             return previousState.distanceCovered
         }
-        // Add only the new segment.
         var delta = 0f
         for (i in (prevIndex + 1)..nearestIndex.coerceAtMost(gpxPoints.size - 1)) {
             delta += LocationTracker.distanceBetween(
@@ -312,7 +310,7 @@ object TrailNavigator {
         return (previousState.distanceCovered + delta).coerceAtMost(totalDistance)
     }
 
-    /** Full sum from index 0 — used only on first fix or as fallback. */
+    /** Full sum from index 0 — used only on the first fix or as fallback. */
     private fun calculateDistanceCovered(points: List<Point>, upToIndex: Int): Float {
         var total = 0f
         for (i in 1..upToIndex.coerceAtMost(points.size - 1)) {
@@ -324,7 +322,7 @@ object TrailNavigator {
         return total
     }
 
-    /** Full trail length — call once and cache in ViewModel. */
+    /** Full trail length — call once and cache in the ViewModel. */
     fun calculateTotalDistance(points: List<Point>): Float {
         var total = 0f
         for (i in 1 until points.size) {
@@ -337,8 +335,6 @@ object TrailNavigator {
     }
 
     // ── ETA ───────────────────────────────────────────────────────────────────
-    // FIX: guard against zero/near-zero speed to prevent division by zero and
-    // absurdly large ETA values when the user is standing still.
 
     fun estimateEta(
         distanceRemainingMeters: Float,
@@ -352,7 +348,7 @@ object TrailNavigator {
             currentSpeedMs > 0.5f -> currentSpeedMs
             avgSpeedMs > 0.3f     -> avgSpeedMs
             else                  -> 0.972f
-        }.coerceAtLeast(0.1f)   // FIX: never divide by zero
+        }.coerceAtLeast(0.1f) // never divide by zero
 
         val secondsRemaining  = (distanceRemainingMeters / speedMs).toLong()
         val hoursRemaining    = secondsRemaining / 3600

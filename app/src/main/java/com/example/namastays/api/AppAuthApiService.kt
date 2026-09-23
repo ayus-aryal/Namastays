@@ -4,7 +4,9 @@ import com.example.namastays.dto.AuthApiResponseBody
 import com.example.namastays.dto.GoogleLoginRequest
 import com.example.namastays.dto.LogoutRequest
 import com.example.namastays.dto.RefreshRequest
+import com.example.namastays.dto.UserProfileResponse
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
 
 interface AppAuthApiService {
@@ -20,4 +22,7 @@ interface AppAuthApiService {
 
     @POST("app-auth/logout-all")
     suspend fun logoutAllDevices()
+
+    @GET("app-auth/me")
+    suspend fun getCurrentUser(): UserProfileResponse
 }

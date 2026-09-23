@@ -2,50 +2,17 @@ package com.example.namastays.trek.util
 
 import kotlin.math.*
 
-/**
- * Smooths GPS bearing using a circular moving average
- * Raw GPS bearing is very noisy — jumps 20-30 degrees
- * between fixes even when walking straight
- * This makes map rotation feel smooth like Google Maps
- */
-class BearingSmoother(private val windowSize: Int = 5) {
-
-    private val bearings = ArrayDeque<Float>(windowSize)
-
-    fun addBearing(bearing: Float): Float {
-        if (bearings.size >= windowSize) {
-            bearings.removeFirst()
-        }
-        bearings.addLast(bearing)
-        return getSmoothed()
-    }
-
-    /**
-     * Circular mean — handles 359° → 1° wrapping correctly
-     * Normal average would give 180° which is wrong
-     */
-    private fun getSmoothed(): Float {
-        if (bearings.isEmpty()) return 0f
-
-        val sinSum = bearings.sumOf { sin(Math.toRadians(it.toDouble())) }
-        val cosSum = bearings.sumOf { cos(Math.toRadians(it.toDouble())) }
-
-        val avg = Math.toDegrees(atan2(sinSum, cosSum)).toFloat()
-        return (avg + 360f) % 360f
-    }
-
-    fun reset() {
-        bearings.clear()
-    }
-}
+// NOTE: BearingSmoother (a windowed circular-mean smoother) previously lived
+// in this file but was dead code — TrekMapViewModel's zero-allocation
+// FloatArray ring buffer (see bearingBufAverage()) replaced it entirely, and
+// nothing else referenced this class. Removed to avoid confusing future
+// maintainers into thinking two competing smoothing strategies are both live.
 
 /**
- * Calculates look-ahead camera offset
- * Moves the camera target AHEAD of the user so more
- * trail is visible in the direction of travel
- *
- * Like Google Maps — you're always in lower third
- * with more road/trail visible ahead
+ * Calculates look-ahead camera offset.
+ * Moves the camera target AHEAD of the user so more trail is visible in the
+ * direction of travel — like Google Maps, where you sit in the lower third
+ * of the screen with more road/trail visible ahead.
  */
 object LookAheadCamera {
 
@@ -62,12 +29,13 @@ object LookAheadCamera {
         zoom: Double,
         offsetFraction: Double = 0.35
     ): Pair<Double, Double> {
-        // How many meters are visible at this zoom level
-        // (approximate — varies by latitude but good enough)
+        // How many meters are visible at this zoom level (approximate — varies
+        // by latitude but good enough for camera framing purposes).
         val metersPerScreen = getMetersPerScreen(zoom, position.latitude)
         val offsetMeters = metersPerScreen * offsetFraction
 
-        // Project ahead in bearing direction
+        // Project ahead in the bearing direction using the standard great-circle
+        // destination-point formula.
         val bearingRad = Math.toRadians(bearing.toDouble())
         val earthRadius = 6371000.0
 
@@ -87,15 +55,12 @@ object LookAheadCamera {
         return Pair(Math.toDegrees(lat2), Math.toDegrees(lng2))
     }
 
-    /**
-     * Approximate meters visible on screen at a given zoom
-     * Based on standard web mercator tile sizing
-     */
+    /** Approximate meters visible on screen at a given zoom, based on standard web-mercator tile sizing. */
     private fun getMetersPerScreen(zoom: Double, latitude: Double): Double {
         val metersPerPixel = 156543.03392 *
                 cos(Math.toRadians(latitude)) /
                 2.0.pow(zoom)
-        // Assume ~800px screen height
+        // Assume ~800px screen height.
         return metersPerPixel * 800
     }
 }

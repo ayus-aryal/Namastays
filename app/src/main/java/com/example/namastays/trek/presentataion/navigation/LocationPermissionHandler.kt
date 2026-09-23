@@ -1,9 +1,10 @@
-package com.example.namastays.trek.presentation.navigation
+package com.example.namastays.trek.presentataion.navigation
 
 import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.location.LocationManager
+import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -103,7 +105,7 @@ fun LocationPermissionHandler(
                 onPrimary = {
                     context.startActivity(
                         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
+                            data = Uri.parse("package:${context.packageName}")
                         }
                     )
                 },
@@ -116,7 +118,7 @@ fun LocationPermissionHandler(
 
 @Composable
 fun LocationErrorCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     message: String,
     primaryButtonText: String,

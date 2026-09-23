@@ -9,7 +9,7 @@
       "maxzoom": 15
     }
   },
-  "glyphs": "http://localhost:8887/fonts/{fontstack}/{range}.pbf",
+  "glyphs": "{glyphs_url}",
   "layers": [
     {
       "id": "background",

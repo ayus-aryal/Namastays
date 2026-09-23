@@ -1,6 +1,9 @@
 package com.example.namastays
 
 import android.content.Context
+import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.example.namastays.api.ApiClient
 import com.example.namastays.auth.AuthRepository
 import com.example.namastays.auth.GoogleAuthManager
@@ -9,6 +12,7 @@ import com.example.namastays.repository.CityRepository
 import com.example.namastays.repository.PlaceRepository
 import com.example.namastays.repository.PropertyRepository
 import com.example.namastays.repository.TrekRepository
+import com.example.namastays.repository.UserRepository
 import com.example.namastays.trek.TrekDatabase
 
 /**
@@ -33,6 +37,31 @@ import com.example.namastays.trek.TrekDatabase
 class AppDependencies(context: Context) {
 
     private val appContext = context.applicationContext
+
+    // ── Image loading ────────────────────────────────────────────────────────
+    // FIX: Coil was running with defaults (no explicit shared ImageLoader),
+    // meaning it could reuse Android's default OkHttp/cache setup rather
+    // than a configured, appropriately-sized memory+disk cache. Setting
+    // this once here and registering it via Coil.setImageLoader ensures
+    // every AsyncImage/SubcomposeAsyncImage across the app — HomeScreen
+    // cards, PlaceList hero, PlaceCard thumbnails — shares one cache, so an
+    // image fetched on one screen is instant on the next.
+    val imageLoader: ImageLoader by lazy {
+        ImageLoader.Builder(appContext)
+            .memoryCache {
+                MemoryCache.Builder(appContext)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(appContext.cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.03)
+                    .build()
+            }
+            .crossfade(true)
+            .build()
+    }
 
     // ── Database ──────────────────────────────────────────────────────────────
 
@@ -79,5 +108,9 @@ class AppDependencies(context: Context) {
 
     val propertyRepository: PropertyRepository by lazy {
         PropertyRepository(api = ApiClient.propertyApi)
+    }
+
+    val userRepository: UserRepository by lazy {
+        UserRepository(api = ApiClient.appAuthApi)
     }
 }

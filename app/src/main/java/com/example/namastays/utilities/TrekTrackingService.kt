@@ -28,6 +28,14 @@ import kotlinx.coroutines.flow.map
  *     restart), close any orphaned session left open by the killed process,
  *     then start a fresh session — engine.start() already calls
  *     closeOrphanedSessions() internally, so no extra work here.
+ *  5. FIX ENG-1 (audit): collect engine.fatalError and stop itself if the
+ *     engine reports it could not start sensors. Previously, a sensor
+ *     startup failure inside TrekEngine.start() had no way to reach this
+ *     service at all — the service would happily keep running its
+ *     foreground notification ("Trek Mode Active") indefinitely even
+ *     though the engine had already closed the session and reset itself.
+ *     That was a stuck, battery-draining foreground service with a
+ *     notification actively lying about tracking being active.
  *
  * ── Session ownership ────────────────────────────────────────────────────────
  *  The session lifecycle is owned entirely by TrekEngine:
@@ -174,6 +182,19 @@ class TrekTrackingService : Service() {
                     }
                 }
         }
+
+        // FIX ENG-1 (audit): collect TrekEngine's fatalError signal. If the
+        // engine could not start its sensors (and has already closed the
+        // session and reset its own state internally — see TrekEngine
+        // FIX ENG-1), this service must stop itself so the foreground
+        // notification disappears instead of continuing to claim "Trek
+        // Mode Active" with no sensors actually feeding it.
+        scope.launch {
+            engine.fatalError.collect { reason ->
+                Log.e(TAG, "Engine reported fatal error, stopping service: $reason")
+                stopSelf()
+            }
+        }
     }
 
     /**
@@ -211,7 +232,7 @@ class TrekTrackingService : Service() {
         runCatching { unregisterReceiver(stopReceiver) }
             .onFailure { Log.w(TAG, "stopReceiver already unregistered: ${it.message}") }
 
-        // Cancel notification observer.
+        // Cancel notification observer + fatalError collector.
         serviceScope?.cancel()
         serviceScope = null
 
@@ -220,6 +241,12 @@ class TrekTrackingService : Service() {
         // record to Room within SESSION_CLOSE_TIMEOUT_MS. The engine's
         // internal CoroutineScope is independent of the service scope,
         // so the close write will complete even after onDestroy() returns.
+        //
+        // Note: if onDestroy() was triggered BY the fatalError path above,
+        // engine.stop() here is a safe no-op — TrekEngine's start() failure
+        // handler already cleared engineScope/currentSessionId itself
+        // before emitting fatalError, so stop()'s "engine not started"
+        // early-return branch fires.
         engine.stop()
     }
 

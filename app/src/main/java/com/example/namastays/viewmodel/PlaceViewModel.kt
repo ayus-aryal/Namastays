@@ -23,14 +23,12 @@ sealed class PlaceUiState {
         val places:           List<PlaceResponse>,
         val selectedCategory: String?
     ) : PlaceUiState()
-    data class Error(val message: String) : PlaceUiState()
+    // FIX #17 — typed AppError instead of String message
+    data class Error(val error: AppError) : PlaceUiState()
 }
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-/**
- * FIX #15/#16/#22 — repository injected; NetworkResult handled explicitly.
- */
 class PlaceViewModel(
     private val repository: PlaceRepository
 ) : ViewModel() {
@@ -50,9 +48,9 @@ class PlaceViewModel(
                     places           = result.data.places,
                     selectedCategory = category
                 )
-                is NetworkResult.NoConnectivity -> PlaceUiState.Error("No internet connection.")
-                is NetworkResult.Timeout        -> PlaceUiState.Error("Request timed out.")
-                is NetworkResult.ServerError    -> PlaceUiState.Error(result.message)
+                else -> PlaceUiState.Error(
+                    networkResultToAppErrorOrNull(result) ?: AppError.Server("Unknown error")
+                )
             }
         }
     }

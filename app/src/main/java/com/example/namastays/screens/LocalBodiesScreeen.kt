@@ -3,8 +3,6 @@ package com.example.namastays.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -32,39 +30,57 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.namastays.ui.theme.PlusJakartaSans
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
-private val SosPageBg        = Color(0xFFF7F8FA)
-private val SosCardBg        = Color(0xFFFFFFFF)
-private val SosCardBorder    = Color(0xFFE5E7EB)
-private val SosTextPrimary   = Color(0xFF111827)
-private val SosTextSecondary = Color(0xFF6B7280)
-private val SosTextHint      = Color(0xFF9CA3AF)
-private val SosGreenCall     = Color(0xFF22C55E)
-private val SosCopyBg        = Color(0xFFEEF2FF)
-private val SosCopyIcon      = Color(0xFF6366F1)
-private val SosBadgeGreen    = Color(0xFF16A34A)
+// Private to this file — local bodies screen specific shades.
+private val LbPageBg        = Color(0xFFF7F8FA)
+private val LbCardBg        = Color(0xFFFFFFFF)
+private val LbCardBorder    = Color(0xFFE5E7EB)
+private val LbTextPrimary   = Color(0xFF111827)
+private val LbTextSecondary = Color(0xFF6B7280)
+private val LbTextHint      = Color(0xFF9CA3AF)
+private val LbGreenCall     = Color(0xFF22C55E)
+private val LbCopyBg        = Color(0xFFEEF2FF)
+private val LbCopyIcon      = Color(0xFF6366F1)
+private val LbBadgeGreen    = Color(0xFF16A34A)
 
-// ─── Data ─────────────────────────────────────────────────────────────────────
+// ─── Data Models ──────────────────────────────────────────────────────────────
+
+/**
+ * A single emergency telephone number entry (Nepal national services).
+ * All data is static — there is no backend for this screen; numbers are
+ * hardcoded as they are unlikely to change and must be available offline.
+ */
 data class EmergencyNumber(
-    val label: String,
-    val number: String,
-    val icon: ImageVector,
+    val label   : String,
+    val number  : String,
+    val icon    : ImageVector,
     val iconTint: Color,
 )
 
+/**
+ * A rescue helicopter / air ambulance operator.
+ * [available247] drives the "24/7" badge display.
+ */
 data class AirlineContact(
-    val name: String,
-    val phone: String,
-    val region: String,
+    val name        : String,
+    val phone       : String,
+    val region      : String,
     val available247: Boolean = true,
 )
 
+/**
+ * A foreign embassy contact entry.
+ * [hours] is free-form text and may include an emergency-line note.
+ */
 data class EmbassyContact(
-    val name: String,
+    val name : String,
     val phone: String,
     val hours: String,
 )
+
+// ─── Static Data ──────────────────────────────────────────────────────────────
 
 private val emergencyNumbers = listOf(
     EmergencyNumber("Nepal Police",    "100",  Icons.Outlined.LocalPolice,         Color(0xFF3B82F6)),
@@ -74,16 +90,16 @@ private val emergencyNumbers = listOf(
 )
 
 private val airlineContacts = listOf(
-    AirlineContact("Simrik Air",          "+977-1-4155341",  "All Nepal"),
-    AirlineContact("Fishtail Air",        "+977-1-4111815",  "All Nepal"),
-    AirlineContact("Altitude Air",        "+977-1-4116665",  "Everest, Annapurna"),
-    AirlineContact("Manang Air",          "+977-1-4115986",  "Annapurna, Manang"),
-    AirlineContact("Sita Air",            "+977-1-4494160",  "All Nepal"),
-    AirlineContact("Tara Air",            "+977-1-5542494",  "Mountain routes"),
-    AirlineContact("Summit Air",          "+977-1-4465266",  "Khumbu region"),
-    AirlineContact("Shree Airlines",      "+977-1-4494560",  "Mustang, Dolpa"),
-    AirlineContact("Air Dynasty",         "+977-1-4004892",  "Kathmandu Valley"),
-    AirlineContact("Karnali Excursions",  "+977-84-420058",  "Karnali region"),
+    AirlineContact("Simrik Air",         "+977-1-4155341", "All Nepal"),
+    AirlineContact("Fishtail Air",       "+977-1-4111815", "All Nepal"),
+    AirlineContact("Altitude Air",       "+977-1-4116665", "Everest, Annapurna"),
+    AirlineContact("Manang Air",         "+977-1-4115986", "Annapurna, Manang"),
+    AirlineContact("Sita Air",           "+977-1-4494160", "All Nepal"),
+    AirlineContact("Tara Air",           "+977-1-5542494", "Mountain routes"),
+    AirlineContact("Summit Air",         "+977-1-4465266", "Khumbu region"),
+    AirlineContact("Shree Airlines",     "+977-1-4494560", "Mustang, Dolpa"),
+    AirlineContact("Air Dynasty",        "+977-1-4004892", "Kathmandu Valley"),
+    AirlineContact("Karnali Excursions", "+977-84-420058", "Karnali region"),
 )
 
 private val embassyContacts = listOf(
@@ -97,15 +113,32 @@ private val embassyContacts = listOf(
 )
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
+
+/**
+ * "Local Bodies" screen — a directory of Nepal emergency phone numbers,
+ * helicopter rescue operators, foreign embassies, and emergency instructions.
+ *
+ * All data is static and hardcoded. No ViewModel is required: there is no
+ * network call, no database, and no state that needs to survive
+ * configuration changes beyond the expand/collapse toggle booleans
+ * (which are intentionally reset on each navigation to this screen).
+ *
+ * NOTE: The screen is named `EmergencySOSScreen` in code for historical
+ * reasons. It navigates to under the `safety/local_bodies` route and is
+ * titled "Local Bodies" in the top bar — the class name is misleading but
+ * kept to avoid rename-induced refactoring risk across the nav graph.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmergencySOSScreen(navController: NavController) {
     val context = LocalContext.current
+
     var airlinesExpanded by remember { mutableStateOf(true) }
     var embassyExpanded  by remember { mutableStateOf(false) }
     var instructExpanded by remember { mutableStateOf(false) }
     var showAllAirlines  by remember { mutableStateOf(false) }
 
+    // Only the first 4 airlines are shown until the user taps "Show more"
     val visibleAirlines = if (showAllAirlines) airlineContacts else airlineContacts.take(4)
 
     Scaffold(
@@ -117,27 +150,31 @@ fun EmergencySOSScreen(navController: NavController) {
                         fontFamily = PlusJakartaSans,
                         fontWeight = FontWeight.Bold,
                         fontSize   = 18.sp,
-                        color      = SosTextPrimary,
+                        color      = LbTextPrimary,
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = SosTextPrimary)
+                        Icon(
+                            Icons.Outlined.ArrowBack,
+                            contentDescription = "Back",
+                            tint               = LbTextPrimary
+                        )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SosCardBg),
+                colors       = TopAppBarDefaults.topAppBarColors(containerColor = LbCardBg),
                 windowInsets = WindowInsets(0, 0, 0, 0),
             )
         },
-        containerColor = SosPageBg,
+        containerColor      = LbPageBg,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
 
         LazyColumn(
-            modifier       = Modifier
+            modifier            = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+            contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
 
@@ -162,8 +199,8 @@ fun EmergencySOSScreen(navController: NavController) {
                         Icon(
                             Icons.Outlined.PhoneInTalk,
                             contentDescription = null,
-                            tint     = Color.White,
-                            modifier = Modifier.size(26.dp),
+                            tint               = Color.White,
+                            modifier           = Modifier.size(26.dp),
                         )
                     }
                     Column {
@@ -184,14 +221,14 @@ fun EmergencySOSScreen(navController: NavController) {
                 }
             }
 
-            // ── Section: Emergency numbers ─────────────────────────────────────
+            // ── Emergency numbers section ──────────────────────────────────────
             item {
                 Text(
                     "EMERGENCY NUMBERS — NEPAL",
                     fontFamily    = PlusJakartaSans,
                     fontWeight    = FontWeight.Bold,
                     fontSize      = 11.sp,
-                    color         = SosTextSecondary,
+                    color         = LbTextSecondary,
                     letterSpacing = 1.sp,
                 )
             }
@@ -200,20 +237,20 @@ fun EmergencySOSScreen(navController: NavController) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
-                        .background(SosCardBg)
-                        .border(1.dp, SosCardBorder, RoundedCornerShape(16.dp))
+                        .background(LbCardBg)
+                        .border(1.dp, LbCardBorder, RoundedCornerShape(16.dp))
                         .padding(horizontal = 16.dp),
                 ) {
                     emergencyNumbers.forEachIndexed { index, item ->
-                        if (index > 0) HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
-                        EmergencyNumberRow(item = item, context = context)
+                        if (index > 0) HorizontalDivider(color = LbCardBorder, thickness = 0.5.dp)
+                        LbEmergencyNumberRow(item = item, context = context)
                     }
                 }
             }
 
-            // ── Section: Helicopter rescue ─────────────────────────────────────
+            // ── Helicopter rescue section ──────────────────────────────────────
             item {
-                SosExpandableSection(
+                LbExpandableSection(
                     icon     = Icons.Outlined.Flight,
                     iconTint = Color(0xFFF59E0B),
                     title    = "Helicopter Rescue",
@@ -223,11 +260,12 @@ fun EmergencySOSScreen(navController: NavController) {
                 ) {
                     Column {
                         visibleAirlines.forEachIndexed { index, airline ->
-                            if (index > 0) HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
-                            AirlineRow(contact = airline, context = context)
+                            if (index > 0) HorizontalDivider(color = LbCardBorder, thickness = 0.5.dp)
+                            LbAirlineRow(contact = airline, context = context)
                         }
+                        // Progressive disclosure: show first 4 then allow "Show more"
                         if (!showAllAirlines && airlineContacts.size > 4) {
-                            HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
+                            HorizontalDivider(color = LbCardBorder, thickness = 0.5.dp)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -247,8 +285,8 @@ fun EmergencySOSScreen(navController: NavController) {
                                 Icon(
                                     Icons.Outlined.KeyboardArrowDown,
                                     contentDescription = null,
-                                    tint     = Color(0xFF3B82F6),
-                                    modifier = Modifier.size(16.dp),
+                                    tint               = Color(0xFF3B82F6),
+                                    modifier           = Modifier.size(16.dp),
                                 )
                             }
                         }
@@ -256,9 +294,9 @@ fun EmergencySOSScreen(navController: NavController) {
                 }
             }
 
-            // ── Section: Embassy contacts ──────────────────────────────────────
+            // ── Embassy contacts section ───────────────────────────────────────
             item {
-                SosExpandableSection(
+                LbExpandableSection(
                     icon     = Icons.Outlined.Language,
                     iconTint = Color(0xFF3B82F6),
                     title    = "Embassy Contacts",
@@ -269,16 +307,16 @@ fun EmergencySOSScreen(navController: NavController) {
                 ) {
                     Column {
                         embassyContacts.forEachIndexed { index, embassy ->
-                            if (index > 0) HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
-                            EmbassyRow(contact = embassy, context = context)
+                            if (index > 0) HorizontalDivider(color = LbCardBorder, thickness = 0.5.dp)
+                            LbEmbassyRow(contact = embassy, context = context)
                         }
                     }
                 }
             }
 
-            // ── Section: Emergency instructions ───────────────────────────────
+            // ── Emergency instructions section ─────────────────────────────────
             item {
-                SosExpandableSection(
+                LbExpandableSection(
                     icon     = Icons.Outlined.MenuBook,
                     iconTint = Color(0xFF6366F1),
                     title    = "What To Do In An Emergency",
@@ -289,37 +327,25 @@ fun EmergencySOSScreen(navController: NavController) {
                         modifier            = Modifier.padding(horizontal = 4.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        SosInstructionItem(
-                            number = "1",
-                            title  = "Stay calm and assess the situation",
-                            body   = "Do not panic. Assess injuries and immediate dangers before acting.",
-                        )
-                        SosInstructionItem(
-                            number = "2",
-                            title  = "Call for help",
-                            body   = "Use the emergency numbers above. Clearly state your location, name, and the nature of the emergency.",
-                        )
-                        SosInstructionItem(
-                            number = "3",
-                            title  = "If at altitude — stop ascending",
-                            body   = "Any worsening of symptoms requires immediate descent. Do not wait for morning.",
-                        )
-                        SosInstructionItem(
-                            number = "4",
-                            title  = "Request helicopter evacuation if needed",
-                            body   = "Call a helicopter rescue service directly. Have your GPS coordinates or a nearby landmark ready.",
-                        )
+                        LbInstructionItem("1", "Stay calm and assess the situation",
+                            "Do not panic. Assess injuries and immediate dangers before acting.")
+                        LbInstructionItem("2", "Call for help",
+                            "Use the emergency numbers above. Clearly state your location, name, and the nature of the emergency.")
+                        LbInstructionItem("3", "If at altitude — stop ascending",
+                            "Any worsening of symptoms requires immediate descent. Do not wait for morning.")
+                        LbInstructionItem("4", "Request helicopter evacuation if needed",
+                            "Call a helicopter rescue service directly. Have your GPS coordinates or a nearby landmark ready.")
                     }
                 }
             }
-
         }
     }
 }
 
-// ─── Emergency number row ──────────────────────────────────────────────────────
+// ─── Emergency Number Row ──────────────────────────────────────────────────────
+
 @Composable
-private fun EmergencyNumberRow(item: EmergencyNumber, context: Context) {
+private fun LbEmergencyNumberRow(item: EmergencyNumber, context: Context) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -334,54 +360,45 @@ private fun EmergencyNumberRow(item: EmergencyNumber, context: Context) {
                 .background(item.iconTint.copy(alpha = 0.1f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector        = item.icon,
-                contentDescription = null,
-                tint               = item.iconTint,
-                modifier           = Modifier.size(20.dp),
-            )
+            Icon(item.icon, null, tint = item.iconTint, modifier = Modifier.size(20.dp))
         }
         Column(
-            modifier = Modifier.weight(1f),
+            modifier            = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(
-                text       = item.label,
-                fontFamily = PlusJakartaSans,
-                fontWeight = FontWeight.Bold,
-                fontSize   = 14.sp,
-                color      = SosTextPrimary,
-            )
-            Text(
-                text       = item.number,
-                fontFamily = PlusJakartaSans,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize   = 20.sp,
-                color      = item.iconTint,
-            )
+            Text(item.label, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LbTextPrimary)
+            Text(item.number, fontFamily = PlusJakartaSans, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = item.iconTint)
         }
-        SosCallCopyButtons(phone = item.number, context = context)
+        LbCallCopyButtons(phone = item.number, context = context)
     }
 }
 
-// ─── Expandable section ────────────────────────────────────────────────────────
+// ─── Expandable Section ────────────────────────────────────────────────────────
+
+/**
+ * A card with a tappable header row and animated expand/collapse content.
+ * Used for Helicopter Rescue, Embassy Contacts, and Emergency Instructions.
+ *
+ * [count] is optional — omit for sections without a numeric badge.
+ * [subtitle] is optional italic text shown below the divider when expanded.
+ */
 @Composable
-private fun SosExpandableSection(
-    icon: ImageVector,
+private fun LbExpandableSection(
+    icon    : ImageVector,
     iconTint: Color,
-    title: String,
-    count: Int? = null,
+    title   : String,
+    count   : Int? = null,
     expanded: Boolean,
     onToggle: () -> Unit,
     subtitle: String? = null,
-    content: @Composable () -> Unit,
+    content : @Composable () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(SosCardBg)
-            .border(1.dp, SosCardBorder, RoundedCornerShape(16.dp)),
+            .background(LbCardBg)
+            .border(1.dp, LbCardBorder, RoundedCornerShape(16.dp)),
     ) {
         Row(
             modifier = Modifier
@@ -398,14 +415,14 @@ private fun SosExpandableSection(
                     .background(iconTint.copy(alpha = 0.1f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+                Icon(icon, null, tint = iconTint, modifier = Modifier.size(18.dp))
             }
             Text(
-                text       = title,
+                title,
                 fontFamily = PlusJakartaSans,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 15.sp,
-                color      = SosTextPrimary,
+                color      = LbTextPrimary,
                 modifier   = Modifier.weight(1f),
             )
             if (count != null) {
@@ -416,19 +433,13 @@ private fun SosExpandableSection(
                         .padding(horizontal = 8.dp, vertical = 3.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text       = "$count",
-                        fontFamily = PlusJakartaSans,
-                        fontWeight = FontWeight.Bold,
-                        fontSize   = 12.sp,
-                        color      = SosCopyIcon,
-                    )
+                    Text("$count", fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = LbCopyIcon)
                 }
             }
             Icon(
                 imageVector        = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
                 contentDescription = if (expanded) "Collapse" else "Expand",
-                tint               = SosTextHint,
+                tint               = LbTextHint,
                 modifier           = Modifier.size(20.dp),
             )
         }
@@ -439,15 +450,15 @@ private fun SosExpandableSection(
             exit    = shrinkVertically(),
         ) {
             Column {
-                HorizontalDivider(color = SosCardBorder, thickness = 0.5.dp)
+                HorizontalDivider(color = LbCardBorder, thickness = 0.5.dp)
                 if (subtitle != null) {
                     Text(
-                        text      = subtitle,
+                        subtitle,
                         fontFamily = PlusJakartaSans,
-                        fontSize  = 12.sp,
-                        color     = SosTextHint,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                        modifier  = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        fontSize   = 12.sp,
+                        color      = LbTextHint,
+                        fontStyle  = androidx.compose.ui.text.font.FontStyle.Italic,
+                        modifier   = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
                 Box(
@@ -464,9 +475,10 @@ private fun SosExpandableSection(
     }
 }
 
-// ─── Airline row ───────────────────────────────────────────────────────────────
+// ─── Airline Row ───────────────────────────────────────────────────────────────
+
 @Composable
-private fun AirlineRow(contact: AirlineContact, context: Context) {
+private fun LbAirlineRow(contact: AirlineContact, context: Context) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -475,68 +487,39 @@ private fun AirlineRow(contact: AirlineContact, context: Context) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Column(
-            modifier = Modifier.weight(1f),
+            modifier            = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Row(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text       = contact.name,
-                    fontFamily = PlusJakartaSans,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 14.sp,
-                    color      = SosTextPrimary,
-                )
+                Text(contact.name, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LbTextPrimary)
                 if (contact.available247) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(SosBadgeGreen)
+                            .background(LbBadgeGreen)
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
-                        Text(
-                            "24/7",
-                            fontFamily = PlusJakartaSans,
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 10.sp,
-                            color      = Color.White,
-                        )
+                        Text("24/7", fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White)
                     }
                 }
             }
-            Text(
-                text       = contact.phone,
-                fontFamily = PlusJakartaSans,
-                fontSize   = 13.sp,
-                color      = SosTextSecondary,
-            )
-            Row(
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(
-                    Icons.Outlined.LocationOn,
-                    contentDescription = null,
-                    tint     = Color(0xFF3B82F6),
-                    modifier = Modifier.size(12.dp),
-                )
-                Text(
-                    text       = contact.region,
-                    fontFamily = PlusJakartaSans,
-                    fontSize   = 11.sp,
-                    color      = Color(0xFF3B82F6),
-                )
+            Text(contact.phone, fontFamily = PlusJakartaSans, fontSize = 13.sp, color = LbTextSecondary)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Outlined.LocationOn, null, tint = Color(0xFF3B82F6), modifier = Modifier.size(12.dp))
+                Text(contact.region, fontFamily = PlusJakartaSans, fontSize = 11.sp, color = Color(0xFF3B82F6))
             }
         }
-        SosCallCopyButtons(phone = contact.phone, context = context)
+        LbCallCopyButtons(phone = contact.phone, context = context)
     }
 }
 
-// ─── Embassy row ───────────────────────────────────────────────────────────────
+// ─── Embassy Row ───────────────────────────────────────────────────────────────
+
 @Composable
-private fun EmbassyRow(contact: EmbassyContact, context: Context) {
+private fun LbEmbassyRow(contact: EmbassyContact, context: Context) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -545,50 +528,34 @@ private fun EmbassyRow(contact: EmbassyContact, context: Context) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Column(
-            modifier = Modifier.weight(1f),
+            modifier            = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Text(
-                text       = contact.name,
-                fontFamily = PlusJakartaSans,
-                fontWeight = FontWeight.Bold,
-                fontSize   = 14.sp,
-                color      = SosTextPrimary,
-            )
-            Text(
-                text       = contact.phone,
-                fontFamily = PlusJakartaSans,
-                fontSize   = 13.sp,
-                color      = SosTextSecondary,
-            )
-            Row(
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(Icons.Outlined.AccessTime, contentDescription = null, tint = SosTextHint, modifier = Modifier.size(11.dp))
-                Text(
-                    text       = contact.hours,
-                    fontFamily = PlusJakartaSans,
-                    fontSize   = 11.sp,
-                    color      = SosTextHint,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis,
-                )
+            Text(contact.name, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LbTextPrimary)
+            Text(contact.phone, fontFamily = PlusJakartaSans, fontSize = 13.sp, color = LbTextSecondary)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Outlined.AccessTime, null, tint = LbTextHint, modifier = Modifier.size(11.dp))
+                Text(contact.hours, fontFamily = PlusJakartaSans, fontSize = 11.sp, color = LbTextHint, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        SosCallCopyButtons(phone = contact.phone, context = context)
+        LbCallCopyButtons(phone = contact.phone, context = context)
     }
 }
 
-// ─── Call + Copy buttons ───────────────────────────────────────────────────────
+// ─── Call + Copy Buttons ──────────────────────────────────────────────────────
+
+/**
+ * Reusable pair of call and copy-to-clipboard buttons, used on every row.
+ * [dialNumber] is defined in ContactScreen.kt (same package) and reused here.
+ */
 @Composable
-private fun SosCallCopyButtons(phone: String, context: Context) {
+private fun LbCallCopyButtons(phone: String, context: Context) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(SosGreenCall)
+                .background(LbGreenCall)
                 .clickable { dialNumber(context, phone) },
             contentAlignment = Alignment.Center,
         ) {
@@ -598,18 +565,19 @@ private fun SosCallCopyButtons(phone: String, context: Context) {
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(SosCopyBg)
+                .background(LbCopyBg)
                 .clickable { copyToClipboard(context, phone) },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy $phone", tint = SosCopyIcon, modifier = Modifier.size(18.dp))
+            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy $phone", tint = LbCopyIcon, modifier = Modifier.size(18.dp))
         }
     }
 }
 
-// ─── Instruction item ──────────────────────────────────────────────────────────
+// ─── Instruction Item ──────────────────────────────────────────────────────────
+
 @Composable
-private fun SosInstructionItem(number: String, title: String, body: String) {
+private fun LbInstructionItem(number: String, title: String, body: String) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment     = Alignment.Top,
@@ -622,34 +590,23 @@ private fun SosInstructionItem(number: String, title: String, body: String) {
                 .border(1.dp, Color(0xFFC7D2FE), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text       = number,
-                fontFamily = PlusJakartaSans,
-                fontWeight = FontWeight.Bold,
-                fontSize   = 12.sp,
-                color      = SosCopyIcon,
-            )
+            Text(number, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = LbCopyIcon)
         }
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                text       = title,
-                fontFamily = PlusJakartaSans,
-                fontWeight = FontWeight.Bold,
-                fontSize   = 13.sp,
-                color      = SosTextPrimary,
-            )
-            Text(
-                text       = body,
-                fontFamily = PlusJakartaSans,
-                fontSize   = 12.sp,
-                color      = SosTextSecondary,
-                lineHeight = 17.sp,
-            )
+            Text(title, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = LbTextPrimary)
+            Text(body, fontFamily = PlusJakartaSans, fontSize = 12.sp, color = LbTextSecondary, lineHeight = 17.sp)
         }
     }
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+// ─── Clipboard Helper ─────────────────────────────────────────────────────────
+
+/**
+ * Copies [text] to the system clipboard and shows a brief Toast confirmation.
+ * Named [copyToClipboard] and private to this file — [dialNumber] is
+ * defined in ContactScreen.kt and referenced here via the shared package
+ * scope (both files are `package com.example.namastays.screens`).
+ */
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Phone number", text))

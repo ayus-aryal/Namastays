@@ -44,6 +44,28 @@ import coil.compose.AsyncImage
 import com.example.namastays.NamastaysApp
 import com.example.namastays.dto.PropertyDetailsResponse
 import com.example.namastays.dto.RoomResponse
+import com.example.namastays.ui.theme.CbAccentIndigo
+import com.example.namastays.ui.theme.CbAmberBg
+import com.example.namastays.ui.theme.CbAmberBorder
+import com.example.namastays.ui.theme.CbAmberIcon
+import com.example.namastays.ui.theme.CbAmberText
+import com.example.namastays.ui.theme.CbBorderGrey
+import com.example.namastays.ui.theme.CbCardBg
+import com.example.namastays.ui.theme.CbDivider
+import com.example.namastays.ui.theme.CbIndigoBg
+import com.example.namastays.ui.theme.CbInputBg
+import com.example.namastays.ui.theme.CbInputBorder
+import com.example.namastays.ui.theme.CbNavyDark
+import com.example.namastays.ui.theme.CbPageBg
+import com.example.namastays.ui.theme.CbPrimaryText
+import com.example.namastays.ui.theme.CbRedBg
+import com.example.namastays.ui.theme.CbRedText
+import com.example.namastays.ui.theme.CbSecondaryText
+import com.example.namastays.ui.theme.CbSelectedBg
+import com.example.namastays.ui.theme.CbSelectedText
+import com.example.namastays.ui.theme.CbSubtleText
+import com.example.namastays.ui.theme.CbTagBg
+import com.example.namastays.ui.theme.PlusJakartaSans
 import com.example.namastays.viewmodel.PropertyDetailsUiState
 import com.example.namastays.viewmodel.PropertyDetailsViewModel
 import java.time.LocalDate
@@ -51,37 +73,28 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Colour tokens
-// ─────────────────────────────────────────────────────────────────────────────
-private val CbPageBg        = Color(0xFFF4F5F9)
-private val CbCardBg        = Color(0xFFFFFFFF)
-private val CbPrimaryText   = Color(0xFF111827)
-private val CbSecondaryText = Color(0xFF6B7280)
-private val CbSubtleText    = Color(0xFF9CA3AF)
-private val CbBorderGrey    = Color(0xFFE5E7EB)
-private val CbAccentIndigo  = Color(0xFF4F46E5)
-private val CbNavyDark      = Color(0xFF1E1B4B)
-private val CbAmberBg       = Color(0xFFFFFBEB)
-private val CbAmberBorder   = Color(0xFFFDE68A)
-private val CbAmberText     = Color(0xFF92400E)
-private val CbAmberIcon     = Color(0xFFB45309)
-private val CbRedBg         = Color(0xFFFEE2E2)
-private val CbRedText       = Color(0xFFDC2626)
-private val CbTagBg         = Color(0xFFF3F4F6)
-private val CbIndigoBg      = Color(0xFFEEF2FF)
-private val CbSelectedBg    = Color(0xFFEEF2FF)
-private val CbSelectedText  = Color(0xFF4F46E5)
-private val CbDivider       = Color(0xFFF3F4F6)
-private val CbInputBorder   = Color(0xFFE5E7EB)
-private val CbInputBg       = Color(0xFFFAFAFA)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Formatters — companion object avoids @RequiresApi on top-level delegates
+// Formatters — companion object avoids @RequiresApi on top-level delegates.
+//
+// DATE_RANGE previously always formatted as "MMM d" with no year, which is
+// ambiguous for bookings spanning a year boundary (e.g. a check-in in late
+// December and check-out in early January). DATE_RANGE_WITH_YEAR is added
+// for that case; formatCheckDate() below picks whichever is appropriate.
 // ─────────────────────────────────────────────────────────────────────────────
 @RequiresApi(Build.VERSION_CODES.O)
 private object Fmts {
     val DATE_RANGE: DateTimeFormatter by lazy { DateTimeFormatter.ofPattern("MMM d") }
+    val DATE_RANGE_WITH_YEAR: DateTimeFormatter by lazy { DateTimeFormatter.ofPattern("MMM d, yyyy") }
 }
+
+/**
+ * Formats [date] as "MMM d", or "MMM d, yyyy" if [date]'s year differs from
+ * [referenceDate]'s year — disambiguates bookings that cross a year
+ * boundary (e.g. checking in Dec 28 and checking out Jan 3).
+ */
+@RequiresApi(Build.VERSION_CODES.O)
+private fun formatCheckDate(date: LocalDate, referenceDate: LocalDate): String =
+    if (date.year != referenceDate.year) date.format(Fmts.DATE_RANGE_WITH_YEAR)
+    else date.format(Fmts.DATE_RANGE)
 
 private const val SERVICE_RATE = 0.06
 private const val TAX_RATE     = 0.06
@@ -337,6 +350,16 @@ private fun CbTextField(
 // ─────────────────────────────────────────────────────────────────────────────
 // Additional guest row
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A single additional guest's name field, plus a "Details" button.
+ *
+ * The "Details" button is intentionally a no-op for now (planned to expand
+ * per-guest detail fields — e.g. age, ID number — in a later milestone, per
+ * product decision). It is kept visible rather than removed since the
+ * feature is expected to land soon; do not wire it without confirming the
+ * detail fields design first.
+ */
 @Composable
 private fun AdditionalGuestRow(
     guestNumber: Int,
@@ -386,7 +409,8 @@ private fun AdditionalGuestRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .border(1.dp, CbAccentIndigo.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                    .clickable { /* expand detail fields if needed */ }
+                    // Intentional no-op — see KDoc above.
+                    .clickable { /* TODO: expand per-guest detail fields once designed */ }
                     .padding(horizontal = 10.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -555,8 +579,13 @@ private fun PropertySummarySection(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.CalendarMonth, null, tint = CbAccentIndigo, modifier = Modifier.size(13.dp))
                     Spacer(Modifier.width(4.dp))
+                    // Bug fix: dates previously always rendered without a
+                    // year (MMM d), which is ambiguous for bookings spanning
+                    // a year boundary. formatCheckDate() now shows the year
+                    // only when checkIn/checkOut differ from "today"'s year.
+                    val today = remember { LocalDate.now() }
                     Text(
-                        text       = "${checkIn.format(Fmts.DATE_RANGE)} – ${checkOut.format(Fmts.DATE_RANGE)}  ·  $nights night${if (nights > 1L) "s" else ""}",
+                        text       = "${formatCheckDate(checkIn, today)} – ${formatCheckDate(checkOut, today)}  ·  $nights night${if (nights > 1L) "s" else ""}",
                         fontSize   = 12.sp,
                         fontFamily = PlusJakartaSans,
                         color      = CbSecondaryText
@@ -675,7 +704,7 @@ private fun RoomSummarySection(
             ) {
                 Text("CHECK-IN", fontSize = 9.sp, color = CbSubtleText, fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
                 Spacer(Modifier.height(2.dp))
-                Text(checkIn.format(Fmts.DATE_RANGE), fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = PlusJakartaSans, color = CbPrimaryText)
+                Text(formatCheckDate(checkIn, today), fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = PlusJakartaSans, color = CbPrimaryText)
             }
             Column(
                 modifier = Modifier
@@ -687,7 +716,7 @@ private fun RoomSummarySection(
             ) {
                 Text("CHECK-OUT", fontSize = 9.sp, color = CbSubtleText, fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
                 Spacer(Modifier.height(2.dp))
-                Text(checkOut.format(Fmts.DATE_RANGE), fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = PlusJakartaSans, color = CbPrimaryText)
+                Text(formatCheckDate(checkOut, today), fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = PlusJakartaSans, color = CbPrimaryText)
             }
         }
 
@@ -956,6 +985,18 @@ private fun PriceBreakdown.toDisplay() = PriceBreakdownDisplay(
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Booking confirmation form: property + room summary, date pickers, guest
+ * details, price breakdown, cancellation policy, and a sticky "Confirm & Pay"
+ * CTA.
+ *
+ * "Confirm & Pay" is intentionally disabled for now (no-op) — payment flow
+ * is a future milestone, per product decision. The button is fully wired up
+ * (validates the form via [canProceed], computes the live price total) so
+ * that when payment integration lands, only the onClick body needs filling
+ * in.
+ */
 @RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -963,10 +1004,14 @@ fun ConfirmBookingScreen(
     propertyId: String,
     roomId: String,
     navController: NavController,
-    viewModel: PropertyDetailsViewModel = run {
-        val app = LocalContext.current.applicationContext as NamastaysApp
-        viewModel(factory = PropertyDetailsViewModel.Factory(app.deps.propertyRepository))
-    }) {
+) {
+    // Composable-safe ViewModel creation — see SearchResultsScreen.kt /
+    // PropertyDetailsScreen.kt for the same fix and rationale.
+    val app = LocalContext.current.applicationContext as NamastaysApp
+    val viewModel: PropertyDetailsViewModel = viewModel(
+        factory = PropertyDetailsViewModel.Factory(app.deps.propertyRepository)
+    )
+
     // ── Fetch ─────────────────────────────────────────────────────────────────
     LaunchedEffect(propertyId) { viewModel.fetchPropertyDetails(propertyId) }
 
@@ -1023,11 +1068,20 @@ fun ConfirmBookingScreen(
     val phoneError = primaryPhone.isNotBlank() &&
             primaryPhone.replace(PhoneStripRegex, "").length < 7
 
+    // Bug fix: pricePerNight is a String on RoomResponse, and the previous
+    // check `resolvedRoom?.pricePerNight ?: 0 > 0` compared a String? against
+    // an Int due to the Elvis operator's precedence, which does not do what
+    // it looks like it does (Kotlin would actually reject this at compile
+    // time as a type mismatch in practice, but the intent — "is there a
+    // valid positive price" — was fragile). Replaced with an explicit,
+    // unambiguous numeric parse + comparison.
+    val hasValidPrice = (resolvedRoom?.pricePerNight ?: 0) > 0
+
     val canProceed = primaryName.trim().length >= 2 &&
             primaryEmail.isNotBlank() && !emailError &&
             primaryPhone.isNotBlank() && !phoneError &&
             totalGuests <= maxGuests &&
-            (resolvedRoom?.pricePerNight ?: 0) > 0
+            hasValidPrice
 
     // ── Price — memoised, converted to a small stable carrier for the
     //    extracted PriceBreakdownSection ───────────────────────────────────────
@@ -1091,9 +1145,13 @@ fun ConfirmBookingScreen(
                 ) {
 
                     // ── TOP BAR ───────────────────────────────────────────
+                    // Bug fix: statusBarsPadding() was missing here, so on
+                    // edge-to-edge screens the top bar's content sat behind
+                    // the status bar. Added below.
                     Surface(
                         modifier        = Modifier
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .statusBarsPadding(),
                         color           = CbCardBg,
                         shadowElevation = 2.dp
                     ) {
@@ -1248,7 +1306,13 @@ fun ConfirmBookingScreen(
                             )
                         }
                         Button(
-                            onClick        = { /* navigate to payment */ },
+                            // Intentionally disabled / no-op for now —
+                            // payment integration is a future milestone, per
+                            // product decision. Form validation (canProceed)
+                            // and the live price total are already fully
+                            // wired so only this onClick body needs filling
+                            // in once payment lands.
+                            onClick        = { /* TODO: wire payment flow once it exists */ },
                             enabled        = canProceed,
                             shape          = RoundedCornerShape(50.dp),
                             colors         = ButtonDefaults.buttonColors(

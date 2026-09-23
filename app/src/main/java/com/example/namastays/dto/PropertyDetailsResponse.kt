@@ -11,6 +11,8 @@ data class PropertyDetailsResponse(
     val state: String,
     val postalCode: String,
     val country: String,
+    val latitude: Double?,
+    val longitude: Double?,
     val imageUrls: List<String>,
 
     val checkInTime: String?,

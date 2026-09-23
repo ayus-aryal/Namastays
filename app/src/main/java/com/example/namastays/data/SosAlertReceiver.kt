@@ -40,7 +40,7 @@ data class SosAlert(
 // ── Alert handler ─────────────────────────────────────────────────────────────
 object SosAlertReceiver {
 
-    private const val CHANNEL_ID = "sos_alert_channel"
+    private const val CHANNEL_ID = "sos_alert_channel_v2"
     private const val NOTIFICATION_ID = 9001
 
     // Debounce — don't spam notifications from same device
@@ -103,7 +103,7 @@ object SosAlertReceiver {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
+            .setVibrate(longArrayOf(0, 3000))
             .build()
 
         try {
@@ -122,7 +122,15 @@ object SosAlertReceiver {
             ).apply {
                 description = "Emergency SOS alerts from nearby Namastays users"
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0, 3000)
                 enableLights(true)
+                // CHANGE: bypass Do Not Disturb so SOS alerts still vibrate/show
+                // when the receiving device is in DND. This ONLY takes effect if
+                // the user has granted "Notification Policy Access" — see
+                // SosPermissionHelper.hasNotificationPolicyAccess() /
+                // requestNotificationPolicyAccess() below. Without that grant,
+                // this flag is silently ignored by the system.
+                setBypassDnd(true)
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)

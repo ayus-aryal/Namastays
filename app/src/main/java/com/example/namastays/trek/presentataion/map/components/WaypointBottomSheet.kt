@@ -23,7 +23,7 @@ import com.example.namastays.trek.TrekTheme
 import com.example.namastays.trek.domain.Waypoint
 import com.example.namastays.trek.domain.WaypointType
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun WaypointBottomSheet(
     waypoint: Waypoint,

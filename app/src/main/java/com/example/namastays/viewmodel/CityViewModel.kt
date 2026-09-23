@@ -16,22 +16,14 @@ import kotlinx.coroutines.launch
 sealed class CityUiState {
     object Loading : CityUiState()
     data class Success(val cities: List<CityResponse>) : CityUiState()
-    data class Error(val message: String) : CityUiState()
+    // FIX #17 — was Error(val message: String); now carries a typed AppError
+    // so CityErrorState can branch on the real failure kind instead of
+    // string-matching the message text.
+    data class Error(val error: AppError) : CityUiState()
 }
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-/**
- * Changes vs original:
- *
- * FIX #12/#13 — [repository] is now injected; [fetchCities] handles
- * [NetworkResult] instead of catching raw exceptions.
- *
- * FIX #22 — ViewModel no longer constructs CityRepository() itself.
- *            A [Factory] is provided so the call site can supply the
- *            repository (created by whatever DI mechanism is in use —
- *            manual factory, Hilt, etc.).
- */
 class CityViewModel(
     private val repository: CityRepository
 ) : ViewModel() {
@@ -47,10 +39,10 @@ class CityViewModel(
         viewModelScope.launch {
             _uiState.value = CityUiState.Loading
             _uiState.value = when (val result = repository.getCities()) {
-                is NetworkResult.Success      -> CityUiState.Success(result.data)
-                is NetworkResult.NoConnectivity -> CityUiState.Error("No internet connection.")
-                is NetworkResult.Timeout        -> CityUiState.Error("Request timed out.")
-                is NetworkResult.ServerError    -> CityUiState.Error(result.message)
+                is NetworkResult.Success -> CityUiState.Success(result.data)
+                else -> CityUiState.Error(
+                    networkResultToAppErrorOrNull(result) ?: AppError.Server("Unknown error")
+                )
             }
         }
     }

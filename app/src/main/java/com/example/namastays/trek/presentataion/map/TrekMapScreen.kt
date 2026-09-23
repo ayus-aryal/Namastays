@@ -59,11 +59,10 @@ import com.example.namastays.trek.presentataion.map.components.TrekCompletedDial
 import com.example.namastays.trek.presentataion.map.components.TrekMapView
 import com.example.namastays.trek.presentataion.map.components.WaypointBottomSheet
 import com.example.namastays.trek.presentataion.map.components.WrongLocationDialog
+import com.example.namastays.trek.presentataion.navigation.LocationPermissionHandler
 import com.example.namastays.trek.presentation.map.MapLayerManager
 import com.example.namastays.trek.presentation.map.TrekMapViewModel
-import com.example.namastays.trek.presentation.navigation.LocationPermissionHandler
 import com.example.namastays.trek.util.TrekLocation
-import com.example.namastays.trek.util.WaypointParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,8 +73,7 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 
-
-// TrekMapScreen.kt
+/** One-time, process-wide MapLibre SDK initialisation. Safe to call from any screen. */
 object MapLibreInitializer {
     @Volatile private var initialized = false
 
@@ -91,6 +89,48 @@ object MapLibreInitializer {
     }
 }
 
+/**
+ * Holds references to the current [MapLibreMap] instance and the listeners
+ * registered on it, so they can be removed on dispose.
+ *
+ * LEAK FIX: this used to be a set of file-level (effectively process-wide
+ * singleton) `var`s. Two problems with that:
+ *  1. If `onMapReady` ever fired more than once for the same composable
+ *     instance (e.g. a style reload that recreates the underlying map), the
+ *     previous map's listeners were overwritten and never removed — only the
+ *     LAST map's listeners got cleaned up on dispose, leaking every prior
+ *     registration.
+ *  2. Being file-level rather than composable-scoped, two simultaneous
+ *     instances of this screen (e.g. present twice on the back stack) would
+ *     clobber each other's stored references.
+ *
+ * Making this a `remember`-scoped object instead means: (a) it's naturally
+ * tied to this exact composable instance, and (b) because it's a stable
+ * object reference, the outer `DisposableEffect(Unit)`'s `onDispose` closure
+ * can safely read its *current* fields at dispose time even though those
+ * fields were written later in the composition than when the effect was
+ * created — `remember`'s object identity survives recomposition, so there's
+ * no need for file-level statics to bridge that gap.
+ */
+private class MapListenerHolder {
+    var map: MapLibreMap? = null
+    var cameraMoveListener: MapLibreMap.OnCameraMoveStartedListener? = null
+    var mapClickListener: MapLibreMap.OnMapClickListener? = null
+    var mapLongClickListener: MapLibreMap.OnMapLongClickListener? = null
+
+    /** Removes all currently-tracked listeners from whatever map they were attached to. */
+    fun detachAll() {
+        val m = map ?: return
+        cameraMoveListener?.let { m.removeOnCameraMoveStartedListener(it) }
+        mapClickListener?.let { m.removeOnMapClickListener(it) }
+        mapLongClickListener?.let { m.removeOnMapLongClickListener(it) }
+        map = null
+        cameraMoveListener = null
+        mapClickListener = null
+        mapLongClickListener = null
+    }
+}
+
 @SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,6 +143,7 @@ fun TrekMapScreen(
     val scope = rememberCoroutineScope()
     val state by viewModel.uiState.collectAsState()
     val layerManager = remember { MapLayerManager(context) }
+    val listenerHolder = remember { MapListenerHolder() }
 
     LaunchedEffect(Unit) {
         MapLibreInitializer.ensureInitialized(context)
@@ -118,12 +159,16 @@ fun TrekMapScreen(
     var pendingMarkerLat by remember { mutableDoubleStateOf(0.0) }
     var pendingMarkerLng by remember { mutableDoubleStateOf(0.0) }
     var showPermissionHandler by remember { mutableStateOf(false) }
-    var waypoints by remember { mutableStateOf<List<Waypoint>>(emptyList()) }
 
-    // ─── FIX: DisposableEffect is the SINGLE owner of the sensor lifecycle.
-    // Previously stopNavigation() called startSensor() AND this effect also
-    // called it on the next recomposition, causing double-registration.
-    // Now the VM's start/stopNavigation() do NOT touch the sensor at all.
+    // Waypoints now come from ViewModel state (see TrekMapViewModel) instead
+    // of being re-parsed into local Compose state here — keeps a single
+    // source of truth and survives configuration changes correctly.
+    val waypoints = state.waypoints
+
+    // ─── Sensor lifecycle ──────────────────────────────────────────────────────
+    // This DisposableEffect is the SINGLE owner of the compass sensor lifecycle.
+    // startNavigation()/stopNavigation() in the ViewModel do NOT touch the sensor
+    // — that separation is what avoids double-registration.
     DisposableEffect(state.isNavigating) {
         if (!state.isNavigating) {
             viewModel.startSensor()
@@ -133,9 +178,9 @@ fun TrekMapScreen(
         onDispose { viewModel.stopSensor() }
     }
 
-    // ─── FIX: null onDotUpdate when the composable leaves composition.
-    // Without this, the dead-reckoning coroutine kept firing the lambda into a
-    // destroyed map instance whenever the user pressed Back during navigation.
+    // ─── Null onDotUpdate when this composable leaves composition ─────────────
+    // Without this, the dead-reckoning coroutine could keep firing the lambda
+    // into a destroyed map instance if the user pressed Back during navigation.
     DisposableEffect(Unit) {
         onDispose {
             viewModel.onDotUpdate = null
@@ -159,7 +204,7 @@ fun TrekMapScreen(
         layerManager.updateGpsDot(style, loc, null)
     }
 
-    // ─── Completed route colouring ────────────────────────────────────────────
+    // ─── Completed-route colouring ─────────────────────────────────────────────
     LaunchedEffect(state.navigationState?.nearestPointIndex) {
         val idx = state.navigationState?.nearestPointIndex ?: return@LaunchedEffect
         val navStatus = state.navigationState?.status ?: return@LaunchedEffect
@@ -170,9 +215,7 @@ fun TrekMapScreen(
         layerManager.updateCompletedRoute(style, state.gpxPoints, idx)
     }
 
-    // ─── FIX: BackHandler for WrongLocationDialog.
-    // Previously pressing Back while the dialog was visible dismissed it but
-    // left navigation running. Now Back properly stops navigation too.
+    // ─── Back press while WrongLocationDialog is showing also stops nav ───────
     BackHandler(enabled = state.showWrongLocationDialog) {
         viewModel.dismissWrongLocationAndStop()
     }
@@ -199,12 +242,14 @@ fun TrekMapScreen(
             },
             onMapReady = { map ->
                 map.uiSettings.isCompassEnabled = false
+
+                // If a map instance already existed (e.g. a style/map reload),
+                // detach its listeners before attaching new ones to the new
+                // map — prevents accumulating listeners across reloads, which
+                // the old file-level-var approach could not guarantee.
+                listenerHolder.detachAll()
                 mapInstance = map
 
-                // ─── FIX: store listener references so they can be removed on
-                // dispose. MapLibre accumulates listeners on every onMapReady
-                // call if they are never removed, leaking memory and causing
-                // duplicate callbacks after style reloads.
                 val cameraMoveListener = MapLibreMap.OnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         viewModel.disableCameraFollow()
@@ -237,8 +282,16 @@ fun TrekMapScreen(
                 map.addOnMapClickListener(mapClickListener)
                 map.addOnMapLongClickListener(mapLongClickListener)
 
+                // Track everything in the holder so the outer DisposableEffect
+                // (and any future re-entry into this callback) can detach cleanly.
+                listenerHolder.map = map
+                listenerHolder.cameraMoveListener = cameraMoveListener
+                listenerHolder.mapClickListener = mapClickListener
+                listenerHolder.mapLongClickListener = mapLongClickListener
+
                 // Register the dot-update callback; nulled by stopNavigation()
-                // or the DisposableEffect(Unit) onDispose, whichever fires first.
+                // or this composable's DisposableEffect(Unit) onDispose,
+                // whichever fires first.
                 viewModel.onDotUpdate = { lat, lng, bearing ->
                     map.style?.let { style ->
                         layerManager.updateGpsDotDirect(style, lat, lng, bearing)
@@ -263,7 +316,21 @@ fun TrekMapScreen(
                             )
                         } else Pair(lat, lng)
 
-                        map.animateCamera(
+
+                        // FIX #1: this callback fires up to ~60x/sec during
+                        // dead reckoning. animateCamera() queues an
+                        // interpolated transition on EVERY call; at 60Hz each
+                        // new animation starts before the previous one
+                        // finishes, so they fight each other and produce
+                        // stutter instead of smooth motion, while also
+                        // burning CPU/GPU on animation math that's immediately
+                        // superseded. Switched to moveCamera(), which applies
+                        // the camera position instantly with no queued
+                        // transition — at 60 ticks/sec the perceived motion is
+                        // still smooth (the ticks themselves provide the
+                        // smoothing), it's just driven by frequency rather
+                        // than by an animator.
+                        map.moveCamera(
                             CameraUpdateFactory.newCameraPosition(
                                 CameraPosition.Builder()
                                     .target(LatLng(targetLat, targetLng))
@@ -271,8 +338,7 @@ fun TrekMapScreen(
                                     .bearing(if (isMoving) bearing.toDouble() else map.cameraPosition.bearing)
                                     .tilt(if (isMoving) 45.0 else 0.0)
                                     .build()
-                            ),
-                            14
+                            )
                         )
                     }
                 }
@@ -281,11 +347,7 @@ fun TrekMapScreen(
                     map.style?.let { layerManager.initGpsDotLayers(it) }
 
                     layerManager.loadRoute(map, trekId)
-                    layerManager.loadWaypoints(map, trekId)
-
-                    waypoints = withContext(Dispatchers.IO) {
-                        WaypointParser.parse(context, trekId)
-                    }
+                    layerManager.loadWaypoints(map, waypoints)
 
                     map.style?.let {
                         layerManager.refreshCustomMarkers(it, state.customMarkers)
@@ -293,21 +355,6 @@ fun TrekMapScreen(
 
                     viewModel.onRouteLoaded()
                 }
-
-                // FIX: remove all listeners when the map instance is replaced
-                // (style reload) or when the composable leaves composition,
-                // preventing listener accumulation.
-                // Note: this DisposableEffect key is the map instance itself so
-                // it re-runs if onMapReady fires again with a new map object.
-                // The actual removal is hoisted to the outer DisposableEffect
-                // below so it captures the stored listener refs.
-                //
-                // We store them in the outer scope via a side-channel so the
-                // outer DisposableEffect can reach them — see below.
-                _storedCameraMoveListener = cameraMoveListener
-                _storedMapClickListener = mapClickListener
-                _storedMapLongClickListener = mapLongClickListener
-                _storedMap = map
             }
         )
 
@@ -400,12 +447,9 @@ fun TrekMapScreen(
             }
         }
 
-        // ─── FIX: "Locate me" button — browse mode only.
-        // Previously rendered during navigation too (no isNavigating guard),
-        // with a comment saying it was browse-only. During nav the click handler
-        // silently acted as re-centre while the label still said "Locate me".
-        // Now hidden during navigation; the compass/GPS button above handles
-        // re-centring in nav mode.
+        // ─── "Locate me" button — browse mode only ─────────────────────────────
+        // Hidden during navigation; the compass/GPS button above handles
+        // re-centring in that mode instead.
         if (!state.isNavigating) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -474,8 +518,8 @@ fun TrekMapScreen(
                 navigationState = state.navigationState,
                 elapsedSeconds = state.elapsedSeconds,
                 onStop = {
-                    // onDotUpdate is nulled inside stopNavigation() itself now,
-                    // so we don't need to null it here separately.
+                    // onDotUpdate is nulled inside stopNavigation() itself,
+                    // so it doesn't need to be nulled again here.
                     viewModel.stopNavigation()
                     mapInstance?.animateCamera(
                         CameraUpdateFactory.newCameraPosition(
@@ -548,10 +592,10 @@ fun TrekMapScreen(
         }
 
         // ─── Wrong location dialog ─────────────────────────────────────────────
-        // FIX: BackHandler above intercepts system Back and calls
-        // dismissWrongLocationAndStop(). The dialog's own dismiss callback
-        // (tapping outside / system gesture) also goes to the same method,
-        // so navigation is always stopped when this dialog is dismissed.
+        // BackHandler above intercepts system Back and routes it through
+        // dismissWrongLocationAndStop(); the dialog's own dismiss callback
+        // (tap outside / gesture) goes to the same method, so navigation is
+        // always stopped whenever this dialog is dismissed, regardless of how.
         if (state.showWrongLocationDialog) {
             WrongLocationDialog(
                 message = state.wrongLocationMessage,
@@ -622,32 +666,15 @@ fun TrekMapScreen(
         }
     }
 
-    // ─── FIX: remove MapLibre listeners on dispose to prevent accumulation
-    // across style reloads and recompositions. Using a separate DisposableEffect
-    // outside the Box so it always runs even if the tilesExist early-return
-    // fires and skips the map content entirely.
+    // ─── Remove MapLibre listeners on dispose ─────────────────────────────────
+    // Outside the Box so it always runs even if the !state.tilesExist
+    // early-return above skips the map content entirely. Reads listenerHolder
+    // (a stable, remember-scoped object) rather than file-level statics, so
+    // this correctly detaches whatever listeners are CURRENTLY tracked at
+    // dispose time, including after a mid-composition map re-init.
     DisposableEffect(Unit) {
         onDispose {
-            val map = _storedMap ?: return@onDispose
-            _storedCameraMoveListener?.let { map.removeOnCameraMoveStartedListener(it) }
-            _storedMapClickListener?.let { map.removeOnMapClickListener(it) }
-            _storedMapLongClickListener?.let { map.removeOnMapLongClickListener(it) }
-            _storedMap = null
-            _storedCameraMoveListener = null
-            _storedMapClickListener = null
-            _storedMapLongClickListener = null
+            listenerHolder.detachAll()
         }
     }
 }
-
-// ─── Listener side-channel ────────────────────────────────────────────────────
-// These are file-level vars (not in the composable) because we need to pass
-// listener references from the onMapReady lambda (which runs inside the
-// composition) to the outer DisposableEffect(Unit) onDispose block. Composable
-// local `remember` state can't be read inside onDispose after the composable
-// has left composition, so we park them here instead.
-// They are only ever written/read on the main thread.
-private var _storedMap: MapLibreMap? = null
-private var _storedCameraMoveListener: MapLibreMap.OnCameraMoveStartedListener? = null
-private var _storedMapClickListener: MapLibreMap.OnMapClickListener? = null
-private var _storedMapLongClickListener: MapLibreMap.OnMapLongClickListener? = null

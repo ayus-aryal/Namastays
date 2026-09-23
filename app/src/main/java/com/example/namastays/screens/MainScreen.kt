@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.padding
@@ -20,14 +21,14 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import com.example.namastays.auth.AuthEvents
 import com.example.namastays.trek.presentataion.list.TrekListScreen
 import com.example.namastays.trek.presentation.detail.TrekDetailScreen
 import com.example.namastays.trek.presentataion.map.TrekMapScreen
+import com.example.namastays.ui.theme.BackgroundColor
 import com.example.namastays.viewmodel.TrekViewModel
 import com.example.namastays.viewmodel.TrekViewModelFactory
 
-// Routes where the bottom nav must be hidden.
-// Top-level set — allocated once, not on every recomposition.
 private val routesWithoutBottomBar = setOf(
     "login",
     "packing_checklist",
@@ -48,26 +49,27 @@ fun MainScreen(startDestination: String) {
     val navController = rememberNavController()
     val application   = LocalContext.current.applicationContext as Application
 
-    val trekViewModel = remember {
-        TrekViewModelFactory(application).create(TrekViewModel::class.java)
-    }
+    val trekViewModel: TrekViewModel = viewModel(
+        factory = TrekViewModelFactory(application)
+    )
 
-    // Pre-warm: VM is created here at MainScreen scope so it's fully initialised
-    // before the user ever taps "Trip Checklist".
     val packingViewModel: PackingChecklistViewModel = viewModel()
+
+    // Session died mid-use (background token refresh failed for real,
+    // not just offline) — route to login using the exact same mechanism
+    // as manual logout in ProfileScreen. Collected here, once, at the
+    // NavController's own lifetime/scope.
+    LaunchedEffect(Unit) {
+        AuthEvents.sessionExpired.collect {
+            navController.navigate("login") {
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute   = backStackEntry?.destination?.route
 
-    // Resolves the CURRENT route to its parent tab, not just exact top-level matches.
-    // This fixes the bug where nested/detail routes (e.g. "places/{citySlug}",
-    // "search_results/{city}") fell through to `else -> 0` and incorrectly
-    // highlighted Home in the bottom bar regardless of which flow they actually
-    // belong to.
-    //
-    // Flow mapping (per confirmed app structure):
-    //   Home    -> SearchResultsScreen -> PropertyDetailsScreen -> ConfirmBookingScreen
-    //   Explore -> CityListScreen      -> PlaceListScreen       -> PlaceDetailScreen
     val selectedTab = remember(currentRoute) {
         when {
             currentRoute == null -> 0
@@ -103,6 +105,7 @@ fun MainScreen(startDestination: String) {
 
     Scaffold(
         containerColor = BackgroundColor,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (!hideBottomBar) {
                 TravelerBottomNavBar(
@@ -131,19 +134,21 @@ fun MainScreen(startDestination: String) {
     ) { padding ->
 
         val contentPadding = when {
-            // Login draws its own full-bleed background behind the status bar
-            // and handles its own insets (statusBarsPadding/navigationBarsPadding)
-            // internally — it must not inherit ANY Scaffold padding.
             currentRoute == "login" -> PaddingValues(0.dp)
 
             hideBottomBar -> PaddingValues(
-                top    = padding.calculateTopPadding(),
+                top    = 0.dp,
                 start  = padding.calculateStartPadding(LocalLayoutDirection.current),
                 end    = padding.calculateEndPadding(LocalLayoutDirection.current),
                 bottom = 0.dp
             )
 
-            else -> padding
+            else -> PaddingValues(
+                top    = 0.dp,
+                bottom = padding.calculateBottomPadding(), // keep bottom bar inset only
+                start  = padding.calculateStartPadding(LocalLayoutDirection.current),
+                end    = padding.calculateEndPadding(LocalLayoutDirection.current)
+            )
         }
 
         NavHost(
@@ -185,6 +190,25 @@ private fun NavGraphBuilder.addMainTabs(
                 onDelete = { trekViewModel.deleteSession(it) }
             )
         }
+    }
+
+    composable("profile"){
+        val app = LocalContext.current.applicationContext as com.example.namastays.NamastaysApp
+        val profileViewModel: com.example.namastays.viewmodel.ProfileViewModel = viewModel(
+            factory = com.example.namastays.viewmodel.ProfileViewModel.Factory(
+                userRepository = app.deps.userRepository,
+                authRepository = app.deps.authRepository
+            )
+        )
+        ProfileScreen(
+            navController = navController,
+            viewModel = profileViewModel,
+            onLogOutConfirmed = {
+                navController.navigate("login") {
+                    popUpTo(0) { inclusive = true }
+                }
+            }
+        )
     }
 }
 

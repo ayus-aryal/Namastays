@@ -12,6 +12,8 @@ class AuthInterceptor(
         val original = chain.request()
 
         val accessToken = tokenManager.getAccessToken()
+        android.util.Log.d("AuthInterceptor", "TOKEN: $accessToken")   // ← temporary, delete after
+
 
         val request = if (accessToken != null) {
             original.newBuilder()

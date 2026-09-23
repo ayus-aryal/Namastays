@@ -398,6 +398,7 @@ private fun DetailContentScreen(
                 if (trek.description.isNotBlank()) {
                     SectionTitle("About")
                     Spacer(Modifier.height(8.dp))
+                    var isTextOverflowing by remember(trek.id) { mutableStateOf(false) }
                     Text(
                         text       = trek.description,
                         fontFamily = PlusJakartaSans,
@@ -405,13 +406,18 @@ private fun DetailContentScreen(
                         color      = DetailPalette.TextSecondary,
                         lineHeight = 22.sp,
                         maxLines   = if (descExpanded) Int.MAX_VALUE else 4,
-                        overflow   = TextOverflow.Ellipsis
+                        overflow   = TextOverflow.Ellipsis,
+                        onTextLayout = { layoutResult ->
+                            if (!descExpanded) {
+                                isTextOverflowing = layoutResult.hasVisualOverflow
+                            }
+                        }
                     )
-                    if (trek.description.length > 200) {
+                    if (isTextOverflowing || descExpanded) {
                         Spacer(Modifier.height(4.dp))
                         Row(
-                            modifier  = Modifier.clickable { descExpanded = !descExpanded },
-                            verticalAlignment     = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { descExpanded = !descExpanded },
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(

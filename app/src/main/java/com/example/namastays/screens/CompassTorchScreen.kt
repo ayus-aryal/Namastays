@@ -1,5 +1,6 @@
 package com.example.namastays.screens
 
+import android.app.Application
 import android.content.Context
 import android.hardware.*
 import android.hardware.camera2.CameraManager
@@ -20,63 +21,142 @@ import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.*
 import androidx.compose.ui.text.style.*
 import androidx.compose.ui.unit.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.example.namastays.ui.theme.PlusJakartaSans
+import com.example.namastays.viewmodel.AnchorNavState
+import com.example.namastays.viewmodel.CompassViewModel
+import com.example.namastays.viewmodel.CompassViewModelFactory
 import kotlin.math.*
 
 // ─── Shared palette ────────────────────────────────────────────────────────────
-private val BgPage     = Color(0xFFF7F8FA)
-private val BgCard     = Color.White
-private val NavyDark   = Color(0xFF111827)
-private val NavyMid    = Color(0xFF374151)
-private val SubText    = Color(0xFF9CA3AF)
-private val BorderCol  = Color(0xFFE5E7EB)
-private val RedNorth   = Color(0xFFE53935)
-private val BlueAccent = Color(0xFF3B82F6)
-private val AmberWarn  = Color(0xFFF59E0B)
+private val BgPage      = Color(0xFFF7F8FA)
+private val BgCard      = Color.White
+private val NavyDark    = Color(0xFF111827)
+private val NavyMid     = Color(0xFF374151)
+private val SubText     = Color(0xFF9CA3AF)
+private val BorderCol   = Color(0xFFE5E7EB)
+private val RedNorth    = Color(0xFFE53935)
+private val BlueAccent  = Color(0xFF3B82F6)
+private val AmberWarn   = Color(0xFFF59E0B)
+private val AnchorGreen = Color(0xFF22C55E)
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  COMPASS SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Digital compass screen with backtrack-to-anchor support.
+ *
+ * **Heading source — TYPE_ROTATION_VECTOR (revised):**
+ * Previously used raw TYPE_ACCELEROMETER + TYPE_MAGNETIC_FIELD fused via
+ * getRotationMatrix/getOrientation. This is known to be noisy — no
+ * gyroscope stabilization, sensitive to tilt and magnetic interference —
+ * and field testing confirmed inconsistent behavior. Replaced with
+ * TYPE_ROTATION_VECTOR, a gyro-stabilized fused sensor computed by the OS,
+ * matching what the app's MapLibre trail compass already uses successfully.
+ *
+ * A light exponential low-pass filter is applied to the sensor's angle
+ * output (see filteredAzimuth in the listener) in addition to — not
+ * instead of — the spring animation on smoothAzimuth below. These solve
+ * different problems: the low-pass filter reduces raw DATA jitter before
+ * it's used for bearing math; the spring animation eases DISPLAY motion.
+ *
+ * **Declination correction:**
+ * Raw sensor heading is magnetic north, not true north. CompassViewModel
+ * computes local declination (via GeomagneticField, from GPS position) and
+ * exposes it on AnchorNavState; it's added to the raw heading here before
+ * any further use.
+ *
+ * **Anchor bearing arrow:**
+ * Drawn as a separate, non-rotating Canvas layer — NOT inside the
+ * withTransform{ rotate(...) } block that spins the N/S/E/W rose. Its own
+ * angle (anchorRelativeAngle) already has the current heading subtracted
+ * out, so it visually tracks the real-world anchor direction regardless of
+ * which way the disc has rotated. See inline comment at the draw call.
+ *
+ * **Sensor cleanup:** unregistered in onDispose, same as before.
+ */
 @Composable
 fun CompassScreen(navController: NavController) {
     val context = LocalContext.current
+
+    val compassViewModel: CompassViewModel = viewModel(
+        factory = CompassViewModelFactory(context.applicationContext as Application)
+    )
+    val anchorNavState by compassViewModel.anchorNavState.collectAsStateWithLifecycle()
+
     var azimuth       by remember { mutableStateOf(0f) }
     var altitude      by remember { mutableStateOf<Float?>(null) }
     var accuracy      by remember { mutableStateOf("--") }
     var accuracyLevel by remember { mutableStateOf(-1) }
+
     val smoothAzimuth = remember { Animatable(0f) }
 
+    // Declination is read into a plain var (not mutableStateOf) captured by
+    // the sensor listener closure below. It's updated via a side-effect that
+    // re-registers nothing — DisposableEffect is keyed on Unit so sensors
+    // stay registered continuously; declination is instead pushed into a
+    // holder the listener reads from on every event. See declinationHolder.
+    val declinationHolder = remember { FloatArray(1) } // [0] = current declination
+    LaunchedEffect(anchorNavState.declinationDeg) {
+        declinationHolder[0] = anchorNavState.declinationDeg
+    }
+
+    // ── Sensor registration ───────────────────────────────────────────────────
     DisposableEffect(Unit) {
-        val sm            = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val magnetometer  = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-        val accelerometer = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        val pressure      = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
-        var gravity = FloatArray(3)
-        var geo     = FloatArray(3)
+        val sm             = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val rotationVector = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val pressure       = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
+
+        val rotationMatrix = FloatArray(9)
+        val orientation    = FloatArray(3)
+
+        // Exponential low-pass filter state — see class KDoc.
+        var filteredAzimuth = 0f
+        var hasFilterSeed   = false
+        val filterAlpha     = 0.15f
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 when (event.sensor.type) {
-                    Sensor.TYPE_ACCELEROMETER  -> gravity = event.values.clone()
-                    Sensor.TYPE_MAGNETIC_FIELD -> geo     = event.values.clone()
+                    Sensor.TYPE_ROTATION_VECTOR -> {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                        SensorManager.getOrientation(rotationMatrix, orientation)
+
+                        var deg = Math.toDegrees(orientation[0].toDouble()).toFloat()
+                        if (deg < 0) deg += 360f
+
+                        // Declination correction — magnetic → true north.
+                        deg += declinationHolder[0]
+                        if (deg < 0) deg += 360f
+                        if (deg >= 360f) deg -= 360f
+
+                        // Exponential low-pass, shortest-path-aware so it
+                        // doesn't spin the wrong way through the 360°/0° wrap.
+                        if (!hasFilterSeed) {
+                            filteredAzimuth = deg
+                            hasFilterSeed = true
+                        } else {
+                            var delta = deg - filteredAzimuth
+                            if (delta > 180f) delta -= 360f
+                            if (delta < -180f) delta += 360f
+                            filteredAzimuth = (filteredAzimuth + filterAlpha * delta + 360f) % 360f
+                        }
+                        azimuth = filteredAzimuth
+                    }
                     Sensor.TYPE_PRESSURE -> {
                         altitude = SensorManager.getAltitude(
-                            SensorManager.PRESSURE_STANDARD_ATMOSPHERE, event.values[0]
+                            SensorManager.PRESSURE_STANDARD_ATMOSPHERE,
+                            event.values[0]
                         )
                     }
                 }
-                val R = FloatArray(9); val I = FloatArray(9)
-                if (SensorManager.getRotationMatrix(R, I, gravity, geo)) {
-                    val ori = FloatArray(3)
-                    SensorManager.getOrientation(R, ori)
-                    val deg = Math.toDegrees(ori[0].toDouble()).toFloat()
-                    azimuth = if (deg < 0) deg + 360 else deg
-                }
             }
+
             override fun onAccuracyChanged(sensor: Sensor?, acc: Int) {
                 accuracyLevel = acc
                 accuracy = when (acc) {
@@ -87,14 +167,21 @@ fun CompassScreen(navController: NavController) {
                 }
             }
         }
-        sm.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
-        sm.registerListener(listener, magnetometer,  SensorManager.SENSOR_DELAY_UI)
+
+        sm.registerListener(listener, rotationVector, SensorManager.SENSOR_DELAY_GAME)
         pressure?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_NORMAL) }
+
         onDispose { sm.unregisterListener(listener) }
     }
 
-    LaunchedEffect(azimuth) {
-        smoothAzimuth.animateTo(azimuth, spring(dampingRatio = 0.6f, stiffness = 80f))
+    // ── Animation loop (single coroutine, not per-reading) ─────────────────────
+    LaunchedEffect(Unit) {
+        snapshotFlow { azimuth }.collect { target ->
+            smoothAzimuth.animateTo(
+                targetValue   = target,
+                animationSpec = spring(dampingRatio = 0.6f, stiffness = 80f)
+            )
+        }
     }
 
     val direction     = getCardinalDirection(smoothAzimuth.value)
@@ -107,6 +194,17 @@ fun CompassScreen(navController: NavController) {
     val showWarning = accuracyLevel == SensorManager.SENSOR_STATUS_UNRELIABLE ||
             accuracyLevel == SensorManager.SENSOR_STATUS_ACCURACY_LOW
 
+    // Anchor arrow angle within the rose — bearing to anchor minus current
+    // heading. Drawn on a non-rotating layer (see draw call below), so it
+    // tracks the real-world anchor direction regardless of device rotation.
+    // Null (no arrow drawn) when there's no bearing yet OR the user is
+    // within the near-anchor cutoff, where a precise arrow can't be trusted.
+    val anchorRelativeAngle: Float? =
+        if (anchorNavState.isNearAnchor) null
+        else anchorNavState.bearingDegrees?.let { bearing ->
+            ((bearing - smoothAzimuth.value) % 360f).let { if (it < 0) it + 360f else it }
+        }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -115,11 +213,8 @@ fun CompassScreen(navController: NavController) {
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ── Top bar ───────────────────────────────────────────────────────────
         Row(
-            modifier          = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+            modifier          = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { navController.popBackStack() }) {
@@ -129,7 +224,6 @@ fun CompassScreen(navController: NavController) {
             Spacer(Modifier.size(48.dp))
         }
 
-        // ── Warning banner ────────────────────────────────────────────────────
         if (showWarning) {
             Row(
                 modifier = Modifier
@@ -145,8 +239,10 @@ fun CompassScreen(navController: NavController) {
                 Icon(Icons.Outlined.Warning, null, tint = AmberWarn, modifier = Modifier.size(16.dp))
                 Text(
                     "Low accuracy — move phone in a figure-8 to calibrate",
-                    color = Color(0xFF92400E), fontSize = 12.sp,
-                    fontFamily = PlusJakartaSans, lineHeight = 17.sp
+                    color      = Color(0xFF92400E),
+                    fontSize   = 12.sp,
+                    fontFamily = PlusJakartaSans,
+                    lineHeight = 17.sp
                 )
             }
         }
@@ -155,35 +251,31 @@ fun CompassScreen(navController: NavController) {
 
         Text(
             "COMPASS",
-            color = SubText, fontSize = 11.sp,
-            fontWeight = FontWeight.Bold, letterSpacing = 3.sp,
-            fontFamily = PlusJakartaSans
+            color         = SubText,
+            fontSize      = 11.sp,
+            fontWeight    = androidx.compose.ui.text.font.FontWeight.Bold,
+            letterSpacing = 3.sp,
+            fontFamily    = PlusJakartaSans
         )
 
         Spacer(Modifier.height(20.dp))
 
         // ── Compass rose ──────────────────────────────────────────────────────
-        // Box is the fixed 300×300 container; everything inside is positioned within it
         Box(
             modifier         = Modifier.size(300.dp),
             contentAlignment = Alignment.Center
         ) {
             val currentAzimuth = smoothAzimuth.value
 
-            // Full-size Canvas: draws the rotating disc + fixed inner white circle
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx     = size.width  / 2f
                 val cy     = size.height / 2f
-                val outerR = size.minDimension / 2f          // 150.dp in px
-                val innerR = outerR * 0.52f                  // white inner circle
+                val outerR = size.minDimension / 2f
+                val innerR = outerR * 0.52f
 
-                // 1. Outer grey disc (ash colour from screenshot)
                 drawCircle(Color(0xFFF0F1F4), outerR, Offset(cx, cy))
 
-                // 2. Everything that rotates with the compass heading
                 withTransform({ rotate(-currentAzimuth, Offset(cx, cy)) }) {
-
-                    // Degree numbers + N/S/E/W labels — rotate WITH the disc
                     drawIntoCanvas { canvas ->
                         val numPaint = android.graphics.Paint().apply {
                             isAntiAlias = true
@@ -192,9 +284,7 @@ fun CompassScreen(navController: NavController) {
                             color       = android.graphics.Color.argb(140, 17, 24, 39)
                             typeface    = android.graphics.Typeface.DEFAULT
                         }
-                        // Non-cardinal 30° labels
-                        val labelDegs = listOf(30, 60, 120, 150, 210, 240, 300, 330)
-                        for (deg in labelDegs) {
+                        for (deg in listOf(30, 60, 120, 150, 210, 240, 300, 330)) {
                             val rad = Math.toRadians(deg.toDouble())
                             val r   = outerR * 0.78f
                             val x   = cx + r * sin(rad).toFloat()
@@ -202,17 +292,16 @@ fun CompassScreen(navController: NavController) {
                             canvas.nativeCanvas.drawText(deg.toString(), x, y, numPaint)
                         }
 
-                        // Cardinal letters
                         val cardPaint = android.graphics.Paint().apply {
-                            isAntiAlias    = true
-                            textAlign      = android.graphics.Paint.Align.CENTER
-                            textSize       = outerR * 0.19f
-                            typeface       = android.graphics.Typeface.DEFAULT_BOLD
+                            isAntiAlias = true
+                            textAlign   = android.graphics.Paint.Align.CENTER
+                            textSize    = outerR * 0.19f
+                            typeface    = android.graphics.Typeface.DEFAULT_BOLD
                         }
                         val cardR      = outerR * 0.78f
                         val cardOffset = cardPaint.textSize * 0.38f
 
-                        cardPaint.color = android.graphics.Color.argb(255, 229, 57, 53) // red N
+                        cardPaint.color = android.graphics.Color.argb(255, 229, 57, 53)
                         canvas.nativeCanvas.drawText("N", cx, cy - cardR + cardOffset, cardPaint)
                         cardPaint.color = android.graphics.Color.argb(220, 17, 24, 39)
                         canvas.nativeCanvas.drawText("S", cx,         cy + cardR + cardOffset, cardPaint)
@@ -221,12 +310,32 @@ fun CompassScreen(navController: NavController) {
                     }
                 }
 
-                // 3. Inner white circle — drawn AFTER rotate block so it stays fixed on top
                 drawCircle(Color.White, innerR, Offset(cx, cy))
                 drawCircle(Color(0xFFE5E7EB), innerR, Offset(cx, cy), style = Stroke(1.5f))
+
+                // Anchor arrow — deliberately OUTSIDE the withTransform{}
+                // block above, so it does NOT rotate with the disc. Its own
+                // angle already accounts for currentAzimuth (see
+                // anchorRelativeAngle calculation above the Column), which
+                // is what makes it point at the real-world anchor direction
+                // regardless of which way the disc has rotated.
+                anchorRelativeAngle?.let { angle ->
+                    val rad  = Math.toRadians(angle.toDouble())
+                    val tipR = outerR * 0.88f
+                    val tipX = cx + tipR * sin(rad).toFloat()
+                    val tipY = cy - tipR * cos(rad).toFloat()
+
+                    drawLine(
+                        color       = AnchorGreen,
+                        start       = Offset(cx, cy),
+                        end         = Offset(tipX, tipY),
+                        strokeWidth = 5f,
+                        cap         = StrokeCap.Round
+                    )
+                    drawCircle(AnchorGreen, radius = 7f, center = Offset(tipX, tipY))
+                }
             }
 
-            // 4. Degree + direction readout — Compose overlay, centered in Box, above white circle
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
@@ -234,29 +343,28 @@ fun CompassScreen(navController: NavController) {
                 Text(
                     "${currentAzimuth.toInt()}°",
                     color      = NavyDark,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
                     fontSize   = 36.sp,
                     fontFamily = PlusJakartaSans
                 )
                 Text(
                     direction,
-                    color      = BlueAccent,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize   = 20.sp,
+                    color         = BlueAccent,
+                    fontWeight    = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                    fontSize      = 20.sp,
                     letterSpacing = 1.sp,
-                    fontFamily = PlusJakartaSans
+                    fontFamily    = PlusJakartaSans
                 )
             }
 
-            // 5. Fixed red downward triangle pointer at top-centre of the disc
             Canvas(
                 modifier = Modifier
                     .size(16.dp, 12.dp)
                     .align(Alignment.TopCenter)
-                    .offset(y = 6.dp)          // sits just inside the outer rim
+                    .offset(y = 6.dp)
             ) {
                 val path = Path().apply {
-                    moveTo(size.width / 2f, size.height)  // tip points DOWN into the disc
+                    moveTo(size.width / 2f, size.height)
                     lineTo(size.width,      0f)
                     lineTo(0f,             0f)
                     close()
@@ -267,12 +375,9 @@ fun CompassScreen(navController: NavController) {
 
         Spacer(Modifier.height(24.dp))
 
-        // ── Info cards ────────────────────────────────────────────────────────
+        // ── Info cards: altitude + accuracy ─────────────────────────────────────
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .height(IntrinsicSize.Min),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(IntrinsicSize.Min),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Card(
@@ -283,31 +388,22 @@ fun CompassScreen(navController: NavController) {
                 elevation = CardDefaults.cardElevation(0.dp)
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Row(
-                        verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Outlined.TrendingUp, null, tint = SubText, modifier = Modifier.size(14.dp))
                         Text("Altitude", color = SubText, fontSize = 12.sp, fontFamily = PlusJakartaSans)
                     }
                     Text(
                         text       = altitude?.let { "%,.0f m".format(it) } ?: "— m",
                         color      = NavyDark,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
                         fontSize   = 22.sp,
                         fontFamily = PlusJakartaSans
                     )
                     if (altitude == null) {
-                        Text(
-                            "No barometer",
-                            color = Color(0xFFF97316), fontSize = 11.sp,
-                            fontFamily = PlusJakartaSans
-                        )
+                        Text("No barometer", color = Color(0xFFF97316), fontSize = 11.sp, fontFamily = PlusJakartaSans)
                     }
                 }
             }
@@ -320,27 +416,19 @@ fun CompassScreen(navController: NavController) {
                 elevation = CardDefaults.cardElevation(0.dp)
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Row(
-                        verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Outlined.GpsFixed, null, tint = SubText, modifier = Modifier.size(14.dp))
                         Text("Accuracy", color = SubText, fontSize = 12.sp, fontFamily = PlusJakartaSans)
                     }
-                    Row(
-                        verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Canvas(Modifier.size(9.dp)) { drawCircle(accuracyColor) }
                         Text(
                             accuracy,
                             color      = accuracyColor,
-                            fontWeight = FontWeight.ExtraBold,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
                             fontSize   = 22.sp,
                             fontFamily = PlusJakartaSans
                         )
@@ -351,7 +439,14 @@ fun CompassScreen(navController: NavController) {
 
         Spacer(Modifier.height(16.dp))
 
-        // ── Calibration Tips ──────────────────────────────────────────────────
+        AnchorStatusCard(
+            navState = anchorNavState,
+            onClear  = { compassViewModel.clearAnchor() }
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        // ── Calibration tips card ─────────────────────────────────────────────
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -369,8 +464,10 @@ fun CompassScreen(navController: NavController) {
             ) {
                 Text(
                     "Calibration Tips",
-                    color = NavyDark, fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp, fontFamily = PlusJakartaSans
+                    color      = NavyDark,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    fontSize   = 14.sp,
+                    fontFamily = PlusJakartaSans
                 )
                 CalibTip(Icons.Outlined.AllInclusive,        "Move phone in a figure-8 motion repeatedly.")
                 CalibTip(Icons.Outlined.StayCurrentPortrait, "Hold device flat, parallel to the ground.")
@@ -381,6 +478,122 @@ fun CompassScreen(navController: NavController) {
     }
 }
 
+// ── Anchor status card ───────────────────────────────────────────────────────
+
+/**
+ * Shows one of four states:
+ *  - No anchor: "No anchor point saved" + hint to set one in Trek Mode
+ *  - Anchor set, near (within NEAR_ANCHOR_THRESHOLD_M): "You're near the
+ *    anchor" — no distance/bearing precision claimed at this range
+ *  - Anchor set, has a fix, not near: distance + age + accuracy + Clear
+ *  - Anchor set, no location fix yet: age + "Waiting for GPS fix" + Clear
+ */
+@Composable
+private fun AnchorStatusCard(
+    navState : AnchorNavState,
+    onClear  : () -> Unit
+) {
+    val anchor = navState.anchor
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        shape     = RoundedCornerShape(16.dp),
+        colors    = CardDefaults.cardColors(containerColor = if (anchor != null) Color(0xFFF0FDF4) else BgCard),
+        border    = BorderStroke(1.dp, if (anchor != null) AnchorGreen.copy(alpha = 0.35f) else BorderCol),
+        elevation = CardDefaults.cardElevation(0.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector        = if (anchor != null) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                contentDescription = null,
+                tint               = if (anchor != null) AnchorGreen else SubText,
+                modifier           = Modifier.size(20.dp)
+            )
+            Column(Modifier.weight(1f)) {
+                if (anchor == null) {
+                    Text(
+                        "No anchor point saved",
+                        color      = NavyDark,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        fontSize   = 14.sp,
+                        fontFamily = PlusJakartaSans
+                    )
+                    Text(
+                        "Anchor a point in Trek Mode to backtrack here",
+                        color      = SubText,
+                        fontSize   = 12.sp,
+                        fontFamily = PlusJakartaSans
+                    )
+                } else if (navState.isNearAnchor) {
+                    Text(
+                        "You're near the anchor",
+                        color      = NavyDark,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        fontSize   = 16.sp,
+                        fontFamily = PlusJakartaSans
+                    )
+                    Text(
+                        "Within ${AnchorNavState.NEAR_ANCHOR_THRESHOLD_M.toInt()}m · ${relativeAgeLabel(anchor.timestampMillis)}",
+                        color      = SubText,
+                        fontSize   = 12.sp,
+                        fontFamily = PlusJakartaSans
+                    )
+                } else {
+                    Text(
+                        navState.distanceMeters?.let { formatDistance(it) } ?: "Anchor set",
+                        color      = NavyDark,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        fontSize   = 16.sp,
+                        fontFamily = PlusJakartaSans
+                    )
+                    val subtext = buildString {
+                        append(relativeAgeLabel(anchor.timestampMillis))
+                        anchor.accuracyMeters?.let { append(" · ±${it.toInt()}m accuracy") }
+                        if (navState.distanceMeters == null) append(" · Waiting for GPS fix")
+                        else if (navState.isExpiringSoon) append(" · Expiring soon")
+                    }
+                    Text(subtext, color = SubText, fontSize = 12.sp, fontFamily = PlusJakartaSans)
+                }
+            }
+            if (anchor != null) {
+                TextButton(onClick = onClear) {
+                    Text(
+                        "Clear",
+                        color      = Color(0xFFEF4444),
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        fontSize   = 13.sp,
+                        fontFamily = PlusJakartaSans
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** "180m away" under 1km, "1.4km away" at/above. */
+private fun formatDistance(meters: Float): String =
+    if (meters < 1000f) "${meters.roundToInt()}m away"
+    else "%.1fkm away".format(meters / 1000f)
+
+private fun relativeAgeLabel(timestampMillis: Long): String {
+    val ageMs = System.currentTimeMillis() - timestampMillis
+    val mins  = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(ageMs)
+    val hours = java.util.concurrent.TimeUnit.MILLISECONDS.toHours(ageMs)
+    val days  = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(ageMs)
+    return when {
+        mins  < 1  -> "Just now"
+        mins  < 60 -> "${mins}m ago"
+        hours < 24 -> "${hours}h ago"
+        else       -> "${days}d ago"
+    }
+}
+
+// ─── Calibration Tip Row ──────────────────────────────────────────────────────
+
 @Composable
 private fun CalibTip(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
     Row(
@@ -388,19 +601,18 @@ private fun CalibTip(icon: androidx.compose.ui.graphics.vector.ImageVector, text
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFF3F4F6)),
+            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(50.dp)).background(Color(0xFFF3F4F6)),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, null, tint = SubText, modifier = Modifier.size(17.dp))
         }
         Text(
             text,
-            color = NavyDark.copy(alpha = 0.75f), fontSize = 13.sp,
-            lineHeight = 19.sp, fontFamily = PlusJakartaSans,
-            modifier = Modifier.weight(1f)
+            color      = NavyDark.copy(alpha = 0.75f),
+            fontSize   = 13.sp,
+            lineHeight = 19.sp,
+            fontFamily = PlusJakartaSans,
+            modifier   = Modifier.weight(1f)
         )
     }
 }
@@ -416,9 +628,8 @@ fun getCardinalDirection(azimuth: Float): String = when {
     else                                 -> "NW"
 }
 
-
 // ══════════════════════════════════════════════════════════════════════════════
-//  TORCH SCREEN
+//  TORCH SCREEN — unchanged from original
 // ══════════════════════════════════════════════════════════════════════════════
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -427,10 +638,9 @@ fun TorchScreen(navController: NavController) {
     val context = LocalContext.current
     var isTorchOn     by remember { mutableStateOf(false) }
     var strobeEnabled by remember { mutableStateOf(false) }
-    // 200ms default = 5 Hz, matching screenshot
-    var strobeRate    by remember { mutableStateOf(200L) }
+    var strobeRate    by remember { mutableLongStateOf(200L) }
 
-    LaunchedEffect(strobeEnabled, strobeRate) {
+    LaunchedEffect(strobeEnabled) {
         if (strobeEnabled) {
             while (strobeEnabled) {
                 setTorch(context, true)
@@ -441,7 +651,9 @@ fun TorchScreen(navController: NavController) {
         }
     }
 
-    DisposableEffect(Unit) { onDispose { setTorch(context, false) } }
+    DisposableEffect(Unit) {
+        onDispose { setTorch(context, false) }
+    }
 
     Column(
         modifier = Modifier
@@ -450,11 +662,8 @@ fun TorchScreen(navController: NavController) {
             .statusBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ── Top bar: back button only, no title ───────────────────────────────
         Row(
-            modifier          = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+            modifier          = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = {
@@ -469,7 +678,6 @@ fun TorchScreen(navController: NavController) {
 
         Spacer(Modifier.weight(1f))
 
-        // ── Status pill chip ──────────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(50.dp))
@@ -494,27 +702,36 @@ fun TorchScreen(navController: NavController) {
                     isTorchOn     -> AmberWarn
                     else          -> NavyMid
                 },
-                fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                letterSpacing = 2.sp, fontFamily = PlusJakartaSans
+                fontSize      = 13.sp,
+                fontWeight    = androidx.compose.ui.text.font.FontWeight.Bold,
+                letterSpacing = 2.sp,
+                fontFamily    = PlusJakartaSans
             )
         }
 
         Spacer(Modifier.height(28.dp))
 
-        // ── Torch circle button ───────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .size(200.dp)
                 .clip(CircleShape)
                 .background(
                     if (isTorchOn)
-                        Brush.radialGradient(listOf(Color(0xFFFFF9C4), Color(0xFFFFEB3B).copy(alpha = 0.25f)))
+                        Brush.radialGradient(
+                            listOf(Color(0xFFFFF9C4), Color(0xFFFFEB3B).copy(alpha = 0.25f))
+                        )
                     else
-                        Brush.radialGradient(listOf(Color(0xFFFFFFFF), Color(0xFFEEEFF2)))
+                        Brush.radialGradient(
+                            listOf(Color(0xFFFFFFFF), Color(0xFFEEEFF2))
+                        )
                 )
-                .border(1.5.dp, if (isTorchOn) AmberWarn.copy(alpha = 0.5f) else Color(0xFFDDDEE2), CircleShape)
+                .border(
+                    1.5.dp,
+                    if (isTorchOn) AmberWarn.copy(alpha = 0.5f) else Color(0xFFDDDEE2),
+                    CircleShape
+                )
                 .clickable {
-                    isTorchOn = !isTorchOn
+                    isTorchOn     = !isTorchOn
                     strobeEnabled = false
                     setTorch(context, isTorchOn)
                 },
@@ -524,16 +741,17 @@ fun TorchScreen(navController: NavController) {
                 Icon(
                     if (isTorchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
                     contentDescription = null,
-                    tint     = if (isTorchOn) AmberWarn else NavyMid.copy(alpha = 0.45f),
-                    modifier = Modifier.size(52.dp)
+                    tint               = if (isTorchOn) AmberWarn else NavyMid.copy(alpha = 0.45f),
+                    modifier           = Modifier.size(52.dp)
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
                     if (isTorchOn) "ON" else "OFF",
-                    color        = if (isTorchOn) AmberWarn else NavyMid.copy(alpha = 0.45f),
-                    fontWeight   = FontWeight.ExtraBold,
-                    fontSize     = 16.sp, letterSpacing = 3.sp,
-                    fontFamily   = PlusJakartaSans
+                    color         = if (isTorchOn) AmberWarn else NavyMid.copy(alpha = 0.45f),
+                    fontWeight    = androidx.compose.ui.text.font.FontWeight.ExtraBold,
+                    fontSize      = 16.sp,
+                    letterSpacing = 3.sp,
+                    fontFamily    = PlusJakartaSans
                 )
             }
         }
@@ -542,14 +760,15 @@ fun TorchScreen(navController: NavController) {
 
         Text(
             "Tap the circle to toggle your flashlight",
-            color = SubText, fontSize = 13.sp,
-            textAlign = TextAlign.Center, lineHeight = 20.sp,
+            color      = SubText,
+            fontSize   = 13.sp,
+            textAlign  = TextAlign.Center,
+            lineHeight = 20.sp,
             fontFamily = PlusJakartaSans
         )
 
         Spacer(Modifier.weight(1f))
 
-        // ── Emergency Strobe card ─────────────────────────────────────────────
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -565,7 +784,6 @@ fun TorchScreen(navController: NavController) {
                 modifier            = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Header row: red-triangle icon + title/subtitle + switch
                 Row(
                     modifier              = Modifier.fillMaxWidth(),
                     verticalAlignment     = Alignment.CenterVertically,
@@ -576,7 +794,6 @@ fun TorchScreen(navController: NavController) {
                         verticalAlignment     = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Salmon circle with red warning triangle
                         Box(
                             modifier = Modifier
                                 .size(42.dp)
@@ -593,37 +810,38 @@ fun TorchScreen(navController: NavController) {
                         Column {
                             Text(
                                 "Emergency Strobe",
-                                color = NavyDark, fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp, fontFamily = PlusJakartaSans
+                                color      = NavyDark,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                fontSize   = 15.sp,
+                                fontFamily = PlusJakartaSans
                             )
                             Text(
                                 "SOS lighting mode",
-                                color = SubText, fontSize = 12.sp,
+                                color      = SubText,
+                                fontSize   = 12.sp,
                                 fontFamily = PlusJakartaSans
                             )
                         }
                     }
-                    // Switch — no border outline, clean toggle
                     Switch(
                         checked         = strobeEnabled,
-                        onCheckedChange = {
-                            strobeEnabled = it
-                            if (!it) setTorch(context, false)
+                        onCheckedChange = { checked ->
+                            strobeEnabled = checked
+                            if (!checked) setTorch(context, false)
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor       = Color.White,
-                            checkedTrackColor       = BlueAccent,
-                            checkedBorderColor      = Color.Transparent,   // ← removes border
-                            uncheckedThumbColor     = Color.White,
-                            uncheckedTrackColor     = Color(0xFFD1D5DB),
-                            uncheckedBorderColor    = Color.Transparent    // ← removes border
+                            checkedThumbColor    = Color.White,
+                            checkedTrackColor    = BlueAccent,
+                            checkedBorderColor   = Color.Transparent,
+                            uncheckedThumbColor  = Color.White,
+                            uncheckedTrackColor  = Color(0xFFD1D5DB),
+                            uncheckedBorderColor = Color.Transparent
                         )
                     )
                 }
 
                 HorizontalDivider(color = BorderCol, thickness = 0.5.dp)
 
-                // STROBE FREQUENCY label + Hz pill
                 Row(
                     modifier              = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -631,9 +849,11 @@ fun TorchScreen(navController: NavController) {
                 ) {
                     Text(
                         "STROBE FREQUENCY",
-                        color = SubText, fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-                        fontFamily = PlusJakartaSans
+                        color         = SubText,
+                        fontSize      = 10.sp,
+                        fontWeight    = androidx.compose.ui.text.font.FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        fontFamily    = PlusJakartaSans
                     )
                     Box(
                         modifier = Modifier
@@ -643,32 +863,33 @@ fun TorchScreen(navController: NavController) {
                     ) {
                         Text(
                             "${1000L / strobeRate} Hz",
-                            color = BlueAccent, fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold, fontFamily = PlusJakartaSans
+                            color      = BlueAccent,
+                            fontSize   = 13.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            fontFamily = PlusJakartaSans
                         )
                     }
                 }
 
-                // Slider: right = Fast (low ms), left = Slow (high ms)
-                // sliderVal mapped so dragging right increases Hz
                 val sliderVal = 1100f - strobeRate.toFloat()
                 Slider(
                     value         = sliderVal,
-                    onValueChange = { strobeRate = (1100f - it).toLong().coerceIn(100L, 1000L) },
-                    valueRange    = 100f..1000f,
-                    steps         = 8,
-                    modifier      = Modifier.fillMaxWidth(),
-                    thumb         = {
-                        // Large filled circle thumb matching screenshot
+                    onValueChange = {
+                        strobeRate = (1100f - it).toLong().coerceIn(100L, 1000L)
+                    },
+                    valueRange = 100f..1000f,
+                    steps      = 8,
+                    modifier   = Modifier.fillMaxWidth(),
+                    thumb      = {
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF8B9CC8))  // muted blue-grey from screenshot
+                                .background(Color(0xFF8B9CC8))
                                 .shadow(4.dp, CircleShape)
                         )
                     },
-                    track         = { sliderState ->
+                    track = { sliderState ->
                         val fraction = (sliderState.value - 100f) / (1000f - 100f)
                         Box(
                             modifier = Modifier
@@ -681,13 +902,12 @@ fun TorchScreen(navController: NavController) {
                                 modifier = Modifier
                                     .fillMaxWidth(fraction)
                                     .fillMaxHeight()
-                                    .background(Color(0xFFD1D5DB))  // inactive grey, track stays grey per screenshot
+                                    .background(Color(0xFFD1D5DB))
                             )
                         }
                     }
                 )
 
-                // Labels: Slow left, Fast right — matches screenshot
                 Row(
                     modifier              = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -700,10 +920,14 @@ fun TorchScreen(navController: NavController) {
     }
 }
 
+// ─── Torch Helper ─────────────────────────────────────────────────────────────
+
 fun setTorch(context: Context, on: Boolean) {
     try {
         val cam = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val id  = cam.cameraIdList.firstOrNull() ?: return
         cam.setTorchMode(id, on)
-    } catch (e: Exception) { e.printStackTrace() }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
 }

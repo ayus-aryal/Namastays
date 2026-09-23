@@ -1,7 +1,7 @@
-
 package com.example.namastays.screens
 
-import androidx.compose.animation.core.*
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,7 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -36,26 +35,43 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.example.namastays.NamastaysApp
 import com.example.namastays.dto.RoomResponse
+import com.example.namastays.ui.theme.AccentGreen
+import com.example.namastays.ui.theme.CardWhite
+import com.example.namastays.ui.theme.ErrorColor
+import com.example.namastays.ui.theme.ErrorContainer
+import com.example.namastays.ui.theme.NavyDark
+import com.example.namastays.ui.theme.OnErrorContainer
+import com.example.namastays.ui.theme.OnSecContainer
+import com.example.namastays.ui.theme.OnSurface
+import com.example.namastays.ui.theme.OnSurfaceVariant
+import com.example.namastays.ui.theme.OutlineVariant
+import com.example.namastays.ui.theme.PageBg
+import com.example.namastays.ui.theme.PlusJakartaSans
+import com.example.namastays.ui.theme.PlusJakartaSansBold
+import com.example.namastays.ui.theme.Primary
+import com.example.namastays.ui.theme.SecContainer
+import com.example.namastays.ui.theme.SelectedRoomBg
+import com.example.namastays.ui.theme.SurfaceContainer
+import com.example.namastays.ui.theme.SurfaceLow
 import com.example.namastays.viewmodel.PropertyDetailsUiState
 import com.example.namastays.viewmodel.PropertyDetailsViewModel
 
-// ── Colour tokens ─────────────────────────────────────────────────────────────
-private val Primary          = Color(0xFF4648D4)
-private val SecContainer     = Color(0xFFD9DFF5)
-private val OnSecContainer   = Color(0xFF5C6274)
-private val SurfaceContainer = Color(0xFFEFECF8)
-private val OnSurface        = Color(0xFF1B1B23)
-private val OnSurfaceVariant = Color(0xFF464554)
-private val OutlineVariant   = Color(0xFFC7C4D7)
-private val ErrorColor       = Color(0xFFBA1A1A)
-private val ErrorContainer   = Color(0xFFFFDAD6)
-private val OnErrorContainer = Color(0xFF93000A)
-private val SurfaceLow       = Color(0xFFF5F2FE)
-private val PageBg           = Color(0xFFF7F8FA)
-private val NavyDark         = Color(0xFF111827)
-private val SelectedRoomBg   = Color(0xFFEEF2FF)
-private val SkeletonHigh     = Color(0xFFF9FAFB)
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: SkeletonHigh was declared in this file but never referenced anywhere
+// below — dead code. It now lives in ui.theme.Color.kt but is intentionally
+// not imported here since nothing in this file uses it.
+//
+// Bug fix: a SUCCESS color token did not previously exist in this file's
+// local palette (everything was either Primary/indigo or Error/red). The
+// room availability badge used ErrorContainer/OnErrorContainer for the
+// "available" state, which read as a red "sold out"-style badge for rooms
+// that were actually available. AccentGreen (imported from ui.theme.Color)
+// is now used for the available state; ErrorContainer is reserved for the
+// genuinely sold-out state. See RoomCard below.
+// ─────────────────────────────────────────────────────────────────────────────
 
+private val AvailableBg   = Color(0xFFDCFCE7) // light green container, matches AccentGreen family
+private val OnAvailableBg = Color(0xFF166534) // dark green text for contrast on AvailableBg
 
 // ── Skeleton ───────────────────────────────────────────────────────────────────
 @Composable
@@ -143,15 +159,26 @@ private fun PropertyNotFound(onBack: () -> Unit) {
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
+
+/**
+ * Full property details screen: hero image, identity, room picker,
+ * amenities, guest policies, and a sticky "Book Now" CTA.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PropertyDetailsScreen(
     propertyId: String,
     navController: NavController,
-    viewModel: PropertyDetailsViewModel = run {
-        val app = LocalContext.current.applicationContext as NamastaysApp
-        viewModel(factory = PropertyDetailsViewModel.Factory(app.deps.propertyRepository))
-    }) {
+) {
+    // Composable-safe ViewModel creation — see SearchResultsScreen.kt for the
+    // same fix and rationale (the previous `run {}` default-parameter
+    // pattern re-evaluated the factory lambda inline in the signature).
+    val context = LocalContext.current
+    val app = LocalContext.current.applicationContext as NamastaysApp
+    val viewModel: PropertyDetailsViewModel = viewModel(
+        factory = PropertyDetailsViewModel.Factory(app.deps.propertyRepository)
+    )
+
     LaunchedEffect(propertyId) { viewModel.fetchPropertyDetails(propertyId) }
 
     // ── Collect sealed UiState — replaces the broken remember{} delegation ────
@@ -277,7 +304,8 @@ fun PropertyDetailsScreen(
                             Text("${p.city}, ${p.state}", color = OnSurfaceVariant, fontSize = 14.sp, fontFamily = PlusJakartaSans)
                         }
                         Spacer(Modifier.height(8.dp))
-                        Text("View on map", color = Primary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans, modifier = Modifier.clickable { })
+
+                        Text("View on map", color = Primary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, fontFamily = PlusJakartaSans, modifier = Modifier.clickable { openLocationInMaps(context, p) })
                         Spacer(Modifier.height(20.dp))
 
                         // Quick stats card
@@ -473,6 +501,16 @@ private fun QuickStatCol(label: String, value: String) {
 }
 
 // ── Room Card ─────────────────────────────────────────────────────────────────
+
+/**
+ * A single selectable room card.
+ *
+ * Bug fix: the "rooms left" badge previously used the same red
+ * ErrorContainer/OnErrorContainer pair for BOTH the available and sold-out
+ * states, which made available rooms read visually as "sold out". It now
+ * uses AvailableBg/OnAvailableBg (green) when rooms are available and
+ * ErrorContainer/OnErrorContainer (red) only when genuinely sold out.
+ */
 @Composable
 private fun RoomCard(room: RoomResponse, isSelected: Boolean, onSelect: () -> Unit) {
     val isAvailable = room.totalRooms > 0
@@ -504,12 +542,17 @@ private fun RoomCard(room: RoomResponse, isSelected: Boolean, onSelect: () -> Un
                 }
                 Spacer(Modifier.height(14.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.clip(CircleShape).background(if (isAvailable) ErrorContainer else SurfaceContainer).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (isAvailable) AvailableBg else SurfaceContainer)
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
                         Text(
                             text       = if (isAvailable) "${room.totalRooms} room${if (room.totalRooms > 1) "s" else ""} left" else "Sold out",
                             fontSize   = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color      = if (isAvailable) OnErrorContainer else OnSurfaceVariant,
+                            color      = if (isAvailable) OnAvailableBg else OnSurfaceVariant,
                             fontFamily = PlusJakartaSans
                         )
                     }
@@ -525,29 +568,40 @@ private fun RoomCard(room: RoomResponse, isSelected: Boolean, onSelect: () -> Un
 }
 
 // ── Amenity Cell ──────────────────────────────────────────────────────────────
+
+/**
+ * Maps an amenity's name to a representative icon.
+ *
+ * Hoisted to a top-level private function (was previously a local `fun`
+ * declared inside the @Composable AmenityCell, meaning it was re-declared —
+ * though not re-allocated — on every recomposition; moving it out makes the
+ * separation between "pure lookup logic" and "composable UI" explicit and
+ * lets it be reused/tested independently of AmenityCell).
+ */
+private fun iconForAmenity(name: String): ImageVector = when {
+    name.contains("wifi",         ignoreCase = true) -> Icons.Outlined.Wifi
+    name.contains("park",         ignoreCase = true) -> Icons.Outlined.DirectionsCar
+    name.contains("airport",      ignoreCase = true) || name.contains("pickup", ignoreCase = true) -> Icons.Outlined.Flight
+    name.contains("restaurant",   ignoreCase = true) -> Icons.Outlined.Restaurant
+    name.contains("pool",         ignoreCase = true) -> Icons.Outlined.Pool
+    name.contains("spa",          ignoreCase = true) -> Icons.Outlined.Spa
+    name.contains("gym",          ignoreCase = true) -> Icons.Outlined.FitnessCenter
+    name.contains("laundry",      ignoreCase = true) -> Icons.Outlined.LocalLaundryService
+    name.contains("room service", ignoreCase = true) -> Icons.Outlined.RoomService
+    name.contains("breakfast",    ignoreCase = true) -> Icons.Outlined.BreakfastDining
+    name.contains("bar",          ignoreCase = true) -> Icons.Outlined.LocalBar
+    name.contains("tv",           ignoreCase = true) -> Icons.Outlined.Tv
+    name.contains("hot water",    ignoreCase = true) -> Icons.Outlined.HotTub
+    name.contains("ac",           ignoreCase = true) || name.contains("air", ignoreCase = true) -> Icons.Outlined.AcUnit
+    name.contains("garden",       ignoreCase = true) -> Icons.Outlined.Park
+    else                                              -> Icons.Outlined.CheckCircle
+}
+
 @Composable
 private fun AmenityCell(name: String, modifier: Modifier = Modifier) {
-    fun iconFor(n: String): ImageVector = when {
-        n.contains("wifi",         ignoreCase = true) -> Icons.Outlined.Wifi
-        n.contains("park",         ignoreCase = true) -> Icons.Outlined.DirectionsCar
-        n.contains("airport",      ignoreCase = true) || n.contains("pickup", ignoreCase = true) -> Icons.Outlined.Flight
-        n.contains("restaurant",   ignoreCase = true) -> Icons.Outlined.Restaurant
-        n.contains("pool",         ignoreCase = true) -> Icons.Outlined.Pool
-        n.contains("spa",          ignoreCase = true) -> Icons.Outlined.Spa
-        n.contains("gym",          ignoreCase = true) -> Icons.Outlined.FitnessCenter
-        n.contains("laundry",      ignoreCase = true) -> Icons.Outlined.LocalLaundryService
-        n.contains("room service", ignoreCase = true) -> Icons.Outlined.RoomService
-        n.contains("breakfast",    ignoreCase = true) -> Icons.Outlined.BreakfastDining
-        n.contains("bar",          ignoreCase = true) -> Icons.Outlined.LocalBar
-        n.contains("tv",           ignoreCase = true) -> Icons.Outlined.Tv
-        n.contains("hot water",    ignoreCase = true) -> Icons.Outlined.HotTub
-        n.contains("ac",           ignoreCase = true) || n.contains("air", ignoreCase = true) -> Icons.Outlined.AcUnit
-        n.contains("garden",       ignoreCase = true) -> Icons.Outlined.Park
-        else                                          -> Icons.Outlined.CheckCircle
-    }
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(CardWhite, CircleShape), contentAlignment = Alignment.Center) {
-            Icon(iconFor(name), contentDescription = name, tint = Primary, modifier = Modifier.size(22.dp))
+            Icon(iconForAmenity(name), contentDescription = name, tint = Primary, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.height(6.dp))
         Text(name, fontSize = 11.sp, color = OnSurfaceVariant, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, maxLines = 2, fontFamily = PlusJakartaSans)
@@ -573,5 +627,26 @@ private fun PolicyRow(
                 Text(if (allowed) allowedLabel else deniedLabel, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = if (allowed) Primary else OnErrorContainer, fontFamily = PlusJakartaSans)
             }
         }
+    }
+}
+
+
+
+private fun openLocationInMaps(context: android.content.Context, property: com.example.namastays.dto.PropertyDetailsResponse) {
+    val gmmIntentUri = if (property.latitude != null && property.longitude != null) {
+        Uri.parse("geo:${property.latitude},${property.longitude}?q=${property.latitude},${property.longitude}(${Uri.encode(property.propertyName)})")
+    } else {
+        val fullAddress = listOf(property.address, property.city, property.state, property.postalCode, property.country)
+            .filter { it.isNotBlank() }.joinToString(", ")
+        Uri.parse("geo:0,0?q=${Uri.encode(fullAddress)}")
+    }
+    val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply { setPackage("com.google.android.apps.maps") }
+    if (mapIntent.resolveActivity(context.packageManager) != null) {
+        context.startActivity(mapIntent)
+    } else {
+        val fallbackQuery = if (property.latitude != null && property.longitude != null)
+            "${property.latitude},${property.longitude}"
+        else Uri.encode(listOf(property.address, property.city, property.state, property.postalCode, property.country).filter { it.isNotBlank() }.joinToString(", "))
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=$fallbackQuery")))
     }
 }

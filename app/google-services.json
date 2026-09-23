@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "519402313832",
+    "project_id": "namastays-namastays",
+    "storage_bucket": "namastays-namastays.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519402313832:android:338db0a9fe9647f48683dd",
+        "android_client_info": {
+          "package_name": "com.example.namastays"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC8T_HjvS9zU_nR9UscGxU-mqIsUXFSQko"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

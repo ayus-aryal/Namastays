@@ -32,6 +32,15 @@ class AuthRepository(
         return try {
             val response = appAuthApi.loginWithGoogle(GoogleLoginRequest(idToken))
             tokenManager.saveSession(response.accessToken, response.refreshToken, response.expiresIn)
+
+            // Register this device for push now that we have a valid access token.
+            // Best-effort — failure here must never block login.
+            com.example.namastays.notification.NotificationTokenRepository.getCurrentFcmToken()?.let { fcmToken ->
+                com.example.namastays.notification.NotificationTokenRepository.registerToken(context, fcmToken)
+            }
+
+
+
             AuthResult.Success
         } catch (e: HttpException) {
             // 401 here means the backend rejected the Google token itself
@@ -95,6 +104,12 @@ class AuthRepository(
     suspend fun logout(): NetworkResult<Unit> {
         val refreshToken = tokenManager.getRefreshToken()
 
+        // Unregister this device's push token before clearing the session —
+        // needs the still-valid access token to authenticate the call.
+        com.example.namastays.notification.NotificationTokenRepository.getCurrentFcmToken()?.let { fcmToken ->
+            com.example.namastays.notification.NotificationTokenRepository.unregisterToken(fcmToken)
+        }
+
         return try {
             if (refreshToken != null) {
                 appAuthApi.logout(LogoutRequest(refreshToken))
@@ -109,6 +124,11 @@ class AuthRepository(
     }
 
     suspend fun logoutAllDevices(): NetworkResult<Unit> {
+
+        com.example.namastays.notification.NotificationTokenRepository.getCurrentFcmToken()?.let { fcmToken ->
+            com.example.namastays.notification.NotificationTokenRepository.unregisterToken(fcmToken)
+        }
+
         return try {
             appAuthApi.logoutAllDevices()
             tokenManager.clear()

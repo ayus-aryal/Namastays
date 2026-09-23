@@ -1,6 +1,8 @@
 package com.example.namastays.screens
 
 import android.annotation.SuppressLint
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -32,9 +34,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.example.namastays.ui.theme.AccentBlue
+import com.example.namastays.ui.theme.AccentGreen
+import com.example.namastays.ui.theme.BackgroundColor
+import com.example.namastays.ui.theme.BorderColor
+import com.example.namastays.ui.theme.CardWhite
+import com.example.namastays.ui.theme.DestructiveRed
+import com.example.namastays.ui.theme.PlusJakartaSans
+import com.example.namastays.ui.theme.PrimaryText
+import com.example.namastays.ui.theme.SecondaryText
+import com.example.namastays.ui.theme.SubtleText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
@@ -43,8 +56,22 @@ import java.util.UUID
 
 // ─── Data Models ──────────────────────────────────────────────────────────────
 
+/**
+ * A single packing checklist item.
+ *
+ * Bug fix: [id] previously defaulted to `UUID.randomUUID().toString()`
+ * directly in the constructor. Because [defaultCategories] (below) builds
+ * dozens of PackingItem instances via `by lazy`, every one of those UUID
+ * calls executed on whichever thread first touched defaultCategories — which
+ * was identified as a freeze source elsewhere in this app (see
+ * PackingChecklistViewModel's init block). [id] no longer has a default
+ * value: every PackingItem must be constructed with an explicit id, and
+ * [defaultCategories] now generates ids inside the ViewModel's init block on
+ * Dispatchers.Default, where the existing infrastructure for background
+ * initialization already lives.
+ */
 data class PackingItem(
-    val id: String = UUID.randomUUID().toString(),
+    val id: String,
     val name: String,
     val note: String = "",
     val isChecked: Boolean = false,
@@ -63,149 +90,163 @@ data class PackingCategory(
 
 enum class ChecklistFilter { ALL, UNPACKED, PACKED, ESSENTIALS }
 
-private val allFilters = ChecklistFilter.values().toList()
+private val allFilters = ChecklistFilter.entries.toList()
 
 // ─── Default Data ─────────────────────────────────────────────────────────────
 
-private val defaultCategories: List<PackingCategory> by lazy {
-    listOf(
-        PackingCategory(
-            id        = "essentials",
-            name      = "Essentials",
-            icon      = Icons.Outlined.Star,
-            iconBg    = Color(0xFFFFFBEB),
-            iconColor = Color(0xFFF59E0B),
-            items     = listOf(
-                PackingItem(name = "Passport and visa", isEssential = true),
-                PackingItem(name = "Travel insurance docs", isEssential = true),
-                PackingItem(name = "Trekking permit (TIMS card)", isEssential = true),
-                PackingItem(name = "ACAP / NATT permit", isEssential = true),
-                PackingItem(name = "Cash (NPR — ATMs scarce on trail)", isEssential = true),
-                PackingItem(name = "Emergency contact card", isEssential = true),
-            )
-        ),
-        PackingCategory(
-            id        = "clothing",
-            name      = "Clothing",
-            icon      = Icons.Outlined.Checkroom,
-            iconBg    = Color(0xFFF0FDF4),
-            iconColor = Color(0xFF16A34A),
-            items     = listOf(
-                PackingItem(name = "Moisture-wicking base layer"),
-                PackingItem(name = "Fleece jacket"),
-                PackingItem(name = "Down jacket"),
-                PackingItem(name = "Waterproof shell / rain jacket"),
-                PackingItem(name = "Trekking pants", note = "×2"),
-                PackingItem(name = "Thermal leggings"),
-                PackingItem(name = "Wool hiking socks", note = "×4 pairs"),
-                PackingItem(name = "Liner socks", note = "×3 pairs"),
-                PackingItem(name = "Sun hat / wide-brim hat"),
-                PackingItem(name = "Warm beanie"),
-                PackingItem(name = "Gloves (liner + warm outer)"),
-                PackingItem(name = "Buff / neck gaiter"),
-            )
-        ),
-        PackingCategory(
-            id        = "footwear",
-            name      = "Footwear",
-            icon      = Icons.Outlined.DirectionsWalk,
-            iconBg    = Color(0xFFEFF6FF),
-            iconColor = Color(0xFF3B82F6),
-            items     = listOf(
-                PackingItem(name = "Waterproof trekking boots (broken in)"),
-                PackingItem(name = "Camp sandals / flip flops"),
-                PackingItem(name = "Gaiters"),
-                PackingItem(name = "Custom insoles"),
-            )
-        ),
-        PackingCategory(
-            id        = "camping",
-            name      = "Camping",
-            icon      = Icons.Outlined.Landscape,
-            iconBg    = Color(0xFFF0FDF4),
-            iconColor = Color(0xFF059669),
-            items     = listOf(
-                PackingItem(name = "Sleeping bag (−10 °C rated)"),
-                PackingItem(name = "Sleeping bag liner"),
-                PackingItem(name = "Trekking poles", note = "×2"),
-                PackingItem(name = "Headlamp", note = "with spare batteries"),
-                PackingItem(name = "Lighter / waterproof matches"),
-                PackingItem(name = "Whistle"),
-                PackingItem(name = "Knife / multi-tool"),
-                PackingItem(name = "Tent (if camping route)"),
-            )
-        ),
-        PackingCategory(
-            id        = "electronics",
-            name      = "Electronics",
-            icon      = Icons.Outlined.BatteryChargingFull,
-            iconBg    = Color(0xFFF0F9FF),
-            iconColor = Color(0xFF0EA5E9),
-            items     = listOf(
-                PackingItem(name = "Phone + charger"),
-                PackingItem(name = "Power bank", note = "20 000 mAh+"),
-                PackingItem(name = "Camera", note = "with extra SD cards"),
-                PackingItem(name = "USB-C cable", note = "×2"),
-                PackingItem(name = "Solar charger"),
-                PackingItem(name = "Walkie-talkie / satellite communicator"),
-            )
-        ),
-        PackingCategory(
-            id        = "safety",
-            name      = "Safety",
-            icon      = Icons.Outlined.HealthAndSafety,
-            iconBg    = Color(0xFFFFF1F2),
-            iconColor = Color(0xFFEF4444),
-            items     = listOf(
-                PackingItem(name = "First aid kit", isEssential = true),
-                PackingItem(name = "Altitude sickness pills (Diamox)", isEssential = true),
-                PackingItem(name = "Blister pads / moleskin"),
-                PackingItem(name = "Emergency blanket / bivy"),
-                PackingItem(name = "Sunscreen SPF 50+"),
-                PackingItem(name = "Lip balm with SPF"),
-                PackingItem(name = "Insect repellent"),
-                PackingItem(name = "Personal prescription medicines"),
-                PackingItem(name = "Pulse oximeter"),
-            )
-        ),
-        PackingCategory(
-            id        = "hydration_food",
-            name      = "Hydration & Food",
-            icon      = Icons.Outlined.WaterDrop,
-            iconBg    = Color(0xFFEEF2FF),
-            iconColor = Color(0xFF6366F1),
-            items     = listOf(
-                PackingItem(name = "Water bottles", note = "×2 (1 L each)"),
-                PackingItem(name = "Hydration bladder", note = "2 L"),
-                PackingItem(name = "Water purification tablets"),
-                PackingItem(name = "Portable water filter (Sawyer/LifeStraw)"),
-                PackingItem(name = "Energy bars / granola bars", note = "×10"),
-                PackingItem(name = "Trail mix / nuts", note = "×500 g"),
-                PackingItem(name = "Instant noodles / porridge packets"),
-                PackingItem(name = "Electrolyte sachets", note = "×10"),
-                PackingItem(name = "Chocolate / emergency snacks"),
-            )
-        ),
-        PackingCategory(
-            id        = "personal",
-            name      = "Personal",
-            icon      = Icons.Outlined.Person,
-            iconBg    = Color(0xFFFDF4FF),
-            iconColor = Color(0xFF9333EA),
-            items     = listOf(
-                PackingItem(name = "Toothbrush & toothpaste"),
-                PackingItem(name = "Microfiber towel"),
-                PackingItem(name = "Hand sanitiser", note = "×2"),
-                PackingItem(name = "Biodegradable soap / shampoo"),
-                PackingItem(name = "Toilet paper + waste bags"),
-                PackingItem(name = "Wet wipes"),
-                PackingItem(name = "Earplugs"),
-                PackingItem(name = "Sunglasses (UV400)"),
-                PackingItem(name = "Trekking journal / pen"),
-            )
-        ),
-    )
-}
+/**
+ * Builds the default category/item tree with a temporary blank id for every
+ * item — real ids are assigned in [PackingChecklistViewModel]'s init block
+ * via [assignIds], on Dispatchers.Default, so UUID generation never runs on
+ * the thread that first touches this property.
+ */
+private fun buildDefaultCategoriesTemplate(): List<PackingCategory> = listOf(
+    PackingCategory(
+        id        = "essentials",
+        name      = "Essentials",
+        icon      = Icons.Outlined.Star,
+        iconBg    = Color(0xFFFFFBEB),
+        iconColor = Color(0xFFF59E0B),
+        items     = listOf(
+            PackingItem(id = "", name = "Passport and visa", isEssential = true),
+            PackingItem(id = "", name = "Travel insurance docs", isEssential = true),
+            PackingItem(id = "", name = "Trekking permit (TIMS card)", isEssential = true),
+            PackingItem(id = "", name = "ACAP / NATT permit", isEssential = true),
+            PackingItem(id = "", name = "Cash (NPR — ATMs scarce on trail)", isEssential = true),
+            PackingItem(id = "", name = "Emergency contact card", isEssential = true),
+        )
+    ),
+    PackingCategory(
+        id        = "clothing",
+        name      = "Clothing",
+        icon      = Icons.Outlined.Checkroom,
+        iconBg    = Color(0xFFF0FDF4),
+        iconColor = Color(0xFF16A34A),
+        items     = listOf(
+            PackingItem(id = "", name = "Moisture-wicking base layer"),
+            PackingItem(id = "", name = "Fleece jacket"),
+            PackingItem(id = "", name = "Down jacket"),
+            PackingItem(id = "", name = "Waterproof shell / rain jacket"),
+            PackingItem(id = "", name = "Trekking pants", note = "×2"),
+            PackingItem(id = "", name = "Thermal leggings"),
+            PackingItem(id = "", name = "Wool hiking socks", note = "×4 pairs"),
+            PackingItem(id = "", name = "Liner socks", note = "×3 pairs"),
+            PackingItem(id = "", name = "Sun hat / wide-brim hat"),
+            PackingItem(id = "", name = "Warm beanie"),
+            PackingItem(id = "", name = "Gloves (liner + warm outer)"),
+            PackingItem(id = "", name = "Buff / neck gaiter"),
+        )
+    ),
+    PackingCategory(
+        id        = "footwear",
+        name      = "Footwear",
+        icon      = Icons.Outlined.DirectionsWalk,
+        iconBg    = Color(0xFFEFF6FF),
+        iconColor = Color(0xFF3B82F6),
+        items     = listOf(
+            PackingItem(id = "", name = "Waterproof trekking boots (broken in)"),
+            PackingItem(id = "", name = "Camp sandals / flip flops"),
+            PackingItem(id = "", name = "Gaiters"),
+            PackingItem(id = "", name = "Custom insoles"),
+        )
+    ),
+    PackingCategory(
+        id        = "camping",
+        name      = "Camping",
+        icon      = Icons.Outlined.Landscape,
+        iconBg    = Color(0xFFF0FDF4),
+        iconColor = Color(0xFF059669),
+        items     = listOf(
+            PackingItem(id = "", name = "Sleeping bag (−10 °C rated)"),
+            PackingItem(id = "", name = "Sleeping bag liner"),
+            PackingItem(id = "", name = "Trekking poles", note = "×2"),
+            PackingItem(id = "", name = "Headlamp", note = "with spare batteries"),
+            PackingItem(id = "", name = "Lighter / waterproof matches"),
+            PackingItem(id = "", name = "Whistle"),
+            PackingItem(id = "", name = "Knife / multi-tool"),
+            PackingItem(id = "", name = "Tent (if camping route)"),
+        )
+    ),
+    PackingCategory(
+        id        = "electronics",
+        name      = "Electronics",
+        icon      = Icons.Outlined.BatteryChargingFull,
+        iconBg    = Color(0xFFF0F9FF),
+        iconColor = Color(0xFF0EA5E9),
+        items     = listOf(
+            PackingItem(id = "", name = "Phone + charger"),
+            PackingItem(id = "", name = "Power bank", note = "20 000 mAh+"),
+            PackingItem(id = "", name = "Camera", note = "with extra SD cards"),
+            PackingItem(id = "", name = "USB-C cable", note = "×2"),
+            PackingItem(id = "", name = "Solar charger"),
+            PackingItem(id = "", name = "Walkie-talkie / satellite communicator"),
+        )
+    ),
+    PackingCategory(
+        id        = "safety",
+        name      = "Safety",
+        icon      = Icons.Outlined.HealthAndSafety,
+        iconBg    = Color(0xFFFFF1F2),
+        iconColor = Color(0xFFEF4444),
+        items     = listOf(
+            PackingItem(id = "", name = "First aid kit", isEssential = true),
+            PackingItem(id = "", name = "Altitude sickness pills (Diamox)", isEssential = true),
+            PackingItem(id = "", name = "Blister pads / moleskin"),
+            PackingItem(id = "", name = "Emergency blanket / bivy"),
+            PackingItem(id = "", name = "Sunscreen SPF 50+"),
+            PackingItem(id = "", name = "Lip balm with SPF"),
+            PackingItem(id = "", name = "Insect repellent"),
+            PackingItem(id = "", name = "Personal prescription medicines"),
+            PackingItem(id = "", name = "Pulse oximeter"),
+        )
+    ),
+    PackingCategory(
+        id        = "hydration_food",
+        name      = "Hydration & Food",
+        icon      = Icons.Outlined.WaterDrop,
+        iconBg    = Color(0xFFEEF2FF),
+        iconColor = Color(0xFF6366F1),
+        items     = listOf(
+            PackingItem(id = "", name = "Water bottles", note = "×2 (1 L each)"),
+            PackingItem(id = "", name = "Hydration bladder", note = "2 L"),
+            PackingItem(id = "", name = "Water purification tablets"),
+            PackingItem(id = "", name = "Portable water filter (Sawyer/LifeStraw)"),
+            PackingItem(id = "", name = "Energy bars / granola bars", note = "×10"),
+            PackingItem(id = "", name = "Trail mix / nuts", note = "×500 g"),
+            PackingItem(id = "", name = "Instant noodles / porridge packets"),
+            PackingItem(id = "", name = "Electrolyte sachets", note = "×10"),
+            PackingItem(id = "", name = "Chocolate / emergency snacks"),
+        )
+    ),
+    PackingCategory(
+        id        = "personal",
+        name      = "Personal",
+        icon      = Icons.Outlined.Person,
+        iconBg    = Color(0xFFFDF4FF),
+        iconColor = Color(0xFF9333EA),
+        items     = listOf(
+            PackingItem(id = "", name = "Toothbrush & toothpaste"),
+            PackingItem(id = "", name = "Microfiber towel"),
+            PackingItem(id = "", name = "Hand sanitiser", note = "×2"),
+            PackingItem(id = "", name = "Biodegradable soap / shampoo"),
+            PackingItem(id = "", name = "Toilet paper + waste bags"),
+            PackingItem(id = "", name = "Wet wipes"),
+            PackingItem(id = "", name = "Earplugs"),
+            PackingItem(id = "", name = "Sunglasses (UV400)"),
+            PackingItem(id = "", name = "Trekking journal / pen"),
+        )
+    ),
+)
+
+/**
+ * Assigns a fresh UUID to every item in [categories]. Intended to be called
+ * exactly once, inside [PackingChecklistViewModel]'s init block on
+ * Dispatchers.Default — never on the composition/main thread.
+ */
+private fun assignIds(categories: List<PackingCategory>): List<PackingCategory> =
+    categories.map { category ->
+        category.copy(items = category.items.map { it.copy(id = UUID.randomUUID().toString()) })
+    }
 
 // ─── UI State ─────────────────────────────────────────────────────────────────
 
@@ -271,8 +312,14 @@ class PackingChecklistViewModel : ViewModel() {
         )
 
     init {
+        // UUID generation happens here, on Dispatchers.Default, rather than
+        // as PackingItem constructor defaults. This was identified during
+        // audit as a previous source of UI-thread jank elsewhere in the app
+        // (PackingChecklistScreen's navigation freeze); keeping all UUID
+        // allocation funneled through this single background-thread init
+        // block prevents that class of bug from reappearing here.
         viewModelScope.launch(Dispatchers.Default) {
-            val cats = defaultCategories
+            val cats = assignIds(buildDefaultCategoriesTemplate())
             _expandedIds.value = setOf(cats.first().id)
             _categories.value  = cats
         }
@@ -308,7 +355,11 @@ class PackingChecklistViewModel : ViewModel() {
             val cats   = _categories.value
             val catIdx = cats.indexOfFirst { it.id == categoryId }
             if (catIdx == -1) return@launch
-            val newItem = PackingItem(name = name, note = note, isCustom = true)
+            // UUID generation for a single user-added item is fine on
+            // Dispatchers.Default here — this is a one-off allocation
+            // triggered by an explicit user action, not dozens of items
+            // allocated in a tight loop on first access.
+            val newItem = PackingItem(id = UUID.randomUUID().toString(), name = name, note = note, isCustom = true)
             val newCats = cats.toMutableList()
             newCats[catIdx] = cats[catIdx].copy(items = cats[catIdx].items + newItem)
             _categories.value = newCats
@@ -339,15 +390,22 @@ class PackingChecklistViewModel : ViewModel() {
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
+/**
+ * Packing checklist for an upcoming trek: search, filter chips, per-category
+ * expandable sections, and a custom-item add sheet.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PackingChecklistScreen(
     navController : NavController,
     vm            : PackingChecklistViewModel = viewModel()   // fallback for Preview
 ) {
-    val uiState        by vm.uiState.collectAsState()
-    val searchText     by vm.search.collectAsState()
-    val selectedFilter by vm.filter.collectAsState()
+    // Bug fix: previously used collectAsState(), which keeps collecting
+    // even while the app is backgrounded. collectAsStateWithLifecycle()
+    // pauses collection when the lifecycle drops below STARTED.
+    val uiState        by vm.uiState.collectAsStateWithLifecycle()
+    val searchText     by vm.search.collectAsStateWithLifecycle()
+    val selectedFilter by vm.filter.collectAsStateWithLifecycle()
 
     var showResetDialog  by remember { mutableStateOf(false) }
     var showAddItemSheet by remember { mutableStateOf(false) }
@@ -372,12 +430,16 @@ fun PackingChecklistScreen(
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = AccentBlue)
                     }
+                    // Bug fix: this was the only screen title styled with
+                    // AccentBlue (indigo) instead of PrimaryText — every
+                    // other screen's title uses PrimaryText. Changed for
+                    // visual consistency across the app.
                     Text(
                         text       = "Packing Checklist",
                         fontSize   = 18.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = PlusJakartaSans,
-                        color      = AccentBlue,
+                        color      = PrimaryText,
                         modifier   = Modifier.weight(1f)
                     )
                     TextButton(onClick = { showResetDialog = true }) {
@@ -459,11 +521,18 @@ private fun ChecklistContent(
     onToggleExpand : (String) -> Unit,
     onDeleteItem   : (String, String) -> Unit,
 ) {
+    // Bottom content padding is computed from the system navigation bar's
+    // actual height plus a fixed visual buffer for the FAB, instead of a
+    // single hardcoded 100.dp that could clip content on devices with a
+    // tall gesture/navigation bar.
+    val navBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val listBottomPadding = navBarPadding + 84.dp
+
     LazyColumn(
         modifier            = Modifier
             .fillMaxSize()
             .padding(innerPadding),
-        contentPadding      = PaddingValues(bottom = 100.dp),
+        contentPadding      = PaddingValues(bottom = listBottomPadding),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         item(key = "search") {
@@ -660,8 +729,17 @@ fun PackingCategorySection(
     val totalCount  = category.items.size
     val allPacked   = packedCount == totalCount && totalCount > 0
 
-    // Static rotation — no animation when expanding/collapsing.
-    val arrowRotation = if (isExpanded) 90f else 0f
+    // Bug fix: rotation previously jumped instantly between 0f and 90f with
+    // no transition, which felt abrupt against the rest of the screen's
+    // motion language. animateFloatAsState now eases the rotation over
+    // 200ms, matching the tween durations used elsewhere in the app (e.g.
+    // ConfirmBookingScreen's shimmer).
+    val targetRotation = if (isExpanded) 90f else 0f
+    val arrowRotation by animateFloatAsState(
+        targetValue   = targetRotation,
+        animationSpec = tween(200),
+        label         = "packingArrowRotation"
+    )
 
     Card(
         modifier  = Modifier
@@ -676,8 +754,11 @@ fun PackingCategorySection(
                 .fillMaxWidth()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication        = null,
-                    onClick           = onToggle
+                    // Ripple restored for press feedback — was previously
+                    // disabled (indication = null) with no replacement
+                    // feedback mechanism.
+                    indication        = ripple(),
+                    onClick            = onToggle
                 )
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -730,7 +811,8 @@ fun PackingCategorySection(
             )
         }
 
-        // No animateContentSize — expand/collapse happens instantly.
+        // No animateContentSize — expand/collapse happens instantly. This
+        // remains as-is; only the arrow rotation above was animated.
         if (isExpanded) {
             Column {
                 HorizontalDivider(color = BorderColor, thickness = 0.5.dp)
@@ -772,8 +854,9 @@ fun PackingItemRow(
             .fillMaxWidth()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication        = null,
-                onClick           = onCheck
+                // Ripple restored — same fix as PackingCategorySection above.
+                indication        = ripple(),
+                onClick            = onCheck
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -1058,6 +1141,10 @@ fun AddCustomItemSheet(
 }
 
 @SuppressLint("ViewModelConstructorInComposable")
+// Suppression is intentional and scoped to this Preview only: constructing
+// a bare PackingChecklistViewModel() here (rather than via viewModel()) is
+// safe because Previews never go through the real Android lifecycle/
+// SavedStateRegistry that the lint check is protecting against.
 @Preview(showBackground = true, showSystemUi = true, device = "id:pixel_7")
 @Composable
 fun PackingChecklistScreenPreview() {

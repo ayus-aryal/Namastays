@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,10 +32,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -57,7 +60,7 @@ import com.example.namastays.viewmodel.TreksViewModel
 // ── Palette ───────────────────────────────────────────────────────────────────
 
 private object ListPalette {
-    val Background    = Color(0xFFF2EDE8)
+    val Background    = Color(0xFFF7F8FA) //Color(0xFFF2EDE8)
     val Surface       = Color(0xFFFFFFFF)
     val SurfaceDim    = Color(0xFFE8E2DB)
     val TextPrimary   = Color(0xFF1C1916)
@@ -70,6 +73,11 @@ private object ListPalette {
     val SavedGreen    = Color(0xFF4A9E6F)
     val Divider       = Color(0xFFDDD7D0)
 }
+
+// Approx rendered height of one TrekCard (hero image + text body), used only
+// to size the loading skeleton to roughly fill the visible viewport instead
+// of a hardcoded count that leaves empty space on tall/tablet screens.
+private const val APPROX_CARD_HEIGHT_DP = 360
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -97,8 +105,15 @@ fun TrekListScreen(navController: NavController) {
 
     var searchQuery    by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") }
-    val filters        = listOf("All", "Easy", "Moderate", "Hard")
+    // "Downloaded" added — the filtering logic below already handled this
+    // case, but it was previously unreachable since no chip existed for it.
+    val filters        = listOf("All", "Downloaded", "Easy", "Moderate", "Hard")
     val focusManager   = LocalFocusManager.current
+
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
+    val skeletonCount   = remember(screenHeightDp) {
+        (screenHeightDp / APPROX_CARD_HEIGHT_DP).coerceIn(3, 6)
+    }
 
     val currentTreks = when (val s = uiState) {
         is TrekUiState.Loading -> emptyList()
@@ -123,9 +138,18 @@ fun TrekListScreen(navController: NavController) {
         }
     }
 
+    val isRefreshing = uiState is TrekUiState.Loading ||
+            (uiState is TrekUiState.Success && (uiState as TrekUiState.Success).isRefreshing)
+
     Scaffold(
         topBar = {
             TopAppBar(
+                // Explicit status-bar inset: this screen's Scaffold is nested
+                // inside MainScreen's outer Scaffold, and relying on automatic
+                // inset propagation through both left the title flush against
+                // the status bar. Forcing it here guarantees correct spacing
+                // regardless of what the outer Scaffold already consumed.
+                windowInsets = WindowInsets.statusBars.add(WindowInsets(top = 12.dp)),
                 title = {
                     Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                         Text(
@@ -145,9 +169,6 @@ fun TrekListScreen(navController: NavController) {
                     }
                 },
                 actions = {
-                    val isRefreshing = uiState is TrekUiState.Loading ||
-                            (uiState is TrekUiState.Success &&
-                                    (uiState as TrekUiState.Success).isRefreshing)
                     if (isRefreshing) {
                         CircularProgressIndicator(
                             modifier    = Modifier
@@ -174,216 +195,232 @@ fun TrekListScreen(navController: NavController) {
         containerColor = ListPalette.Background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
-        LazyColumn(
-            modifier       = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(bottom = 16.dp)
-        ) {
 
-            // ── Offline / error banner ────────────────────────────────────
-            if (uiState is TrekUiState.Error) {
-                item(key = "error_banner") {
-                    val errorState = uiState as TrekUiState.Error
-                    val message = when (errorState.networkResult) {
-                        is NetworkResult.NoConnectivity ->
-                            "No internet — showing cached trails"
-                        is NetworkResult.Timeout        ->
-                            "Connection timed out — showing cached trails"
-                        is NetworkResult.ServerError    ->
-                            "Server error — showing cached trails"
-                        else -> return@item
-                    }
-                    AnimatedVisibility(
-                        visible = true,
-                        enter   = fadeIn() + slideInVertically()
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            color = ListPalette.AccentLight
+        // Pull-to-refresh wraps the whole list — users expect a swipe-down
+        // gesture here in addition to the manual refresh icon in the TopAppBar.
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh    = { viewModel.refresh() },
+            modifier     = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            LazyColumn(
+                modifier       = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+
+                // ── Offline / error banner ────────────────────────────────
+                if (uiState is TrekUiState.Error) {
+                    item(key = "error_banner") {
+                        val errorState = uiState as TrekUiState.Error
+                        val message = when (errorState.networkResult) {
+                            is NetworkResult.NoConnectivity ->
+                                "No internet — showing cached trails"
+                            is NetworkResult.Timeout        ->
+                                "Connection timed out — showing cached trails"
+                            is NetworkResult.ServerError    ->
+                                "Server error — showing cached trails"
+                            else -> return@item
+                        }
+                        AnimatedVisibility(
+                            visible = true,
+                            enter   = fadeIn() + slideInVertically()
                         ) {
-                            Row(
-                                modifier              = Modifier.padding(12.dp),
-                                verticalAlignment     = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                color = ListPalette.AccentLight
                             ) {
-                                Icon(
-                                    imageVector        = Icons.Filled.WifiOff,
-                                    contentDescription = null,
-                                    tint               = ListPalette.Accent,
-                                    modifier           = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text       = message,
-                                    fontFamily = PlusJakartaSans,
-                                    fontSize   = 12.sp,
-                                    color      = ListPalette.Accent,
-                                    modifier   = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick        = { viewModel.refresh() },
-                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                Row(
+                                    modifier              = Modifier.padding(12.dp),
+                                    verticalAlignment     = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text(
-                                        text       = "Retry",
-                                        fontFamily = PlusJakartaSans,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize   = 12.sp,
-                                        color      = ListPalette.Accent
+                                    Icon(
+                                        imageVector        = Icons.Filled.WifiOff,
+                                        contentDescription = null,
+                                        tint               = ListPalette.Accent,
+                                        modifier           = Modifier.size(16.dp)
                                     )
+                                    Text(
+                                        text       = message,
+                                        fontFamily = PlusJakartaSans,
+                                        fontSize   = 12.sp,
+                                        color      = ListPalette.Accent,
+                                        modifier   = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick        = { viewModel.refresh() },
+                                        contentPadding = PaddingValues(horizontal = 8.dp)
+                                    ) {
+                                        Text(
+                                            text       = "Retry",
+                                            fontFamily = PlusJakartaSans,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize   = 12.sp,
+                                            color      = ListPalette.Accent
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // ── Search bar ────────────────────────────────────────────────
-            item(key = "search_bar") {
-                OutlinedTextField(
-                    value         = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder   = {
-                        Text(
-                            text       = "Search treks, regions…",
+                // ── Search bar ────────────────────────────────────────────
+                item(key = "search_bar") {
+                    OutlinedTextField(
+                        value         = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder   = {
+                            Text(
+                                text       = "Search treks, regions…",
+                                fontFamily = PlusJakartaSans,
+                                fontSize   = 14.sp,
+                                color      = ListPalette.TextSecondary
+                            )
+                        },
+                        leadingIcon  = {
+                            Icon(
+                                imageVector        = Icons.Filled.Search,
+                                contentDescription = null,
+                                tint               = ListPalette.TextSecondary,
+                                modifier           = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            AnimatedVisibility(
+                                visible = searchQuery.isNotEmpty(),
+                                enter   = fadeIn(tween(150)),
+                                exit    = fadeOut(tween(150))
+                            ) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector        = Icons.Filled.Close,
+                                        contentDescription = "Clear search",
+                                        tint               = ListPalette.TextSecondary,
+                                        modifier           = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        singleLine      = true,
+                        shape           = RoundedCornerShape(12.dp),
+                        // Trek/region names are proper nouns but the system
+                        // default capitalization behavior fights the user
+                        // mid-sentence for partial queries — disable it and
+                        // let people type naturally lowercase if they want.
+                        keyboardOptions = KeyboardOptions(
+                            imeAction      = ImeAction.Search,
+                            capitalization = KeyboardCapitalization.None
+                        ),
+                        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                        textStyle       = androidx.compose.ui.text.TextStyle(
                             fontFamily = PlusJakartaSans,
                             fontSize   = 14.sp,
-                            color      = ListPalette.TextSecondary
-                        )
-                    },
-                    leadingIcon  = {
-                        Icon(
-                            imageVector        = Icons.Filled.Search,
-                            contentDescription = null,
-                            tint               = ListPalette.TextSecondary,
-                            modifier           = Modifier.size(18.dp)
-                        )
-                    },
-                    trailingIcon = {
-                        // FIX: animate the clear button in/out instead of abrupt pop
-                        AnimatedVisibility(
-                            visible = searchQuery.isNotEmpty(),
-                            enter   = fadeIn(tween(150)),
-                            exit    = fadeOut(tween(150))
-                        ) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    imageVector        = Icons.Filled.Close,
-                                    contentDescription = "Clear search",
-                                    tint               = ListPalette.TextSecondary,
-                                    modifier           = Modifier.size(18.dp)
-                                )
-                            }
+                            color      = ListPalette.TextPrimary
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor      = ListPalette.Accent,
+                            unfocusedBorderColor    = ListPalette.Divider,
+                            focusedContainerColor   = ListPalette.Surface,
+                            unfocusedContainerColor = ListPalette.Surface,
+                            cursorColor             = ListPalette.Accent,
+                            focusedTextColor        = ListPalette.TextPrimary,
+                            unfocusedTextColor      = ListPalette.TextPrimary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+
+                // ── Filter chips ──────────────────────────────────────────
+                item(key = "filter_chips") {
+                    LazyRow(
+                        contentPadding        = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier              = Modifier.padding(bottom = 12.dp)
+                    ) {
+                        items(filters, key = { it }) { filter ->
+                            FilterChipItem(
+                                label    = filter,
+                                selected = selectedFilter == filter,
+                                onClick  = {
+                                    selectedFilter = filter
+                                    focusManager.clearFocus()
+                                }
+                            )
                         }
-                    },
-                    singleLine      = true,
-                    shape           = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
-                    textStyle       = androidx.compose.ui.text.TextStyle(
-                        fontFamily = PlusJakartaSans,
-                        fontSize   = 14.sp,
-                        color      = ListPalette.TextPrimary
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor      = ListPalette.Accent,
-                        unfocusedBorderColor    = ListPalette.Divider,
-                        focusedContainerColor   = ListPalette.Surface,
-                        unfocusedContainerColor = ListPalette.Surface,
-                        cursorColor             = ListPalette.Accent,
-                        focusedTextColor        = ListPalette.TextPrimary,
-                        unfocusedTextColor      = ListPalette.TextPrimary
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                )
-            }
+                    }
+                }
 
-            // ── Filter chips ──────────────────────────────────────────────
-            item(key = "filter_chips") {
-                LazyRow(
-                    contentPadding        = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier              = Modifier.padding(bottom = 12.dp)
-                ) {
-                    items(filters, key = { it }) { filter ->
-                        FilterChipItem(
-                            label    = filter,
-                            selected = selectedFilter == filter,
-                            onClick  = {
-                                selectedFilter = filter
-                                focusManager.clearFocus()
-                            }
+                // ── Results count ─────────────────────────────────────────
+                if (searchQuery.isNotBlank() || selectedFilter != "All") {
+                    item(key = "results_count") {
+                        val label = when {
+                            filteredTreks.isEmpty() -> "No trails found"
+                            filteredTreks.size == 1 -> "1 trail found"
+                            else                    -> "${filteredTreks.size} trails found"
+                        }
+                        Text(
+                            text       = label,
+                            fontFamily = PlusJakartaSans,
+                            fontSize   = 11.sp,
+                            color      = ListPalette.TextSecondary,
+                            modifier   = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                         )
                     }
                 }
-            }
 
-            // ── Results count ─────────────────────────────────────────────
-            if (searchQuery.isNotBlank() || selectedFilter != "All") {
-                item(key = "results_count") {
-                    val label = when {
-                        filteredTreks.isEmpty() -> "No trails found"
-                        filteredTreks.size == 1 -> "1 trail found"
-                        else                    -> "${filteredTreks.size} trails found"
+                // ── Skeleton loading ──────────────────────────────────────
+                if (uiState is TrekUiState.Loading) {
+                    items(count = skeletonCount, key = { "skeleton_$it" }) {
+                        TrekCardSkeleton(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
                     }
-                    Text(
-                        text       = label,
-                        fontFamily = PlusJakartaSans,
-                        fontSize   = 11.sp,
-                        color      = ListPalette.TextSecondary,
-                        modifier   = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                    )
                 }
-            }
 
-            // ── Skeleton loading ──────────────────────────────────────────
-            if (uiState is TrekUiState.Loading) {
-                items(count = 3, key = { "skeleton_$it" }) {
-                    TrekCardSkeleton(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
+                // ── Trek cards ─────────────────────────────────────────────
+                items(
+                    items = filteredTreks,
+                    key   = { it.id }
+                ) { trek ->
+                    var visible by remember { mutableStateOf(false) }
+                    LaunchedEffect(trek.id) { visible = true }
+                    AnimatedVisibility(
+                        visible = visible,
+                        enter   = fadeIn(tween(220)) + slideInVertically(
+                            animationSpec = tween(220, easing = FastOutSlowInEasing),
+                            initialOffsetY = { it / 6 }
+                        )
+                    ) {
+                        TrekCard(
+                            trek         = trek,
+                            isDownloaded = trek.id in downloadedIds,
+                            onClick      = { navController.navigate("trek_detail/${trek.id}") },
+                            modifier     = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
                 }
-            }
 
-            // ── Trek cards ────────────────────────────────────────────────
-            items(
-                items = filteredTreks,
-                key   = { it.id }
-            ) { trek ->
-                // FIX: slide + fade each card in as it enters the viewport
-                var visible by remember { mutableStateOf(false) }
-                LaunchedEffect(trek.id) { visible = true }
-                AnimatedVisibility(
-                    visible = visible,
-                    enter   = fadeIn(tween(220)) + slideInVertically(
-                        animationSpec = tween(220, easing = FastOutSlowInEasing),
-                        initialOffsetY = { it / 6 }
-                    )
-                ) {
-                    TrekCard(
-                        trek         = trek,
-                        isDownloaded = trek.id in downloadedIds,
-                        // FIX: single click source — only Card handles navigation,
-                        // inner "View Trek" button passes the same lambda rather than
-                        // registering its own clickable on top.
-                        onClick      = { navController.navigate("trek_detail/${trek.id}") },
-                        modifier     = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            }
-
-            // ── Empty state ───────────────────────────────────────────────
-            if (uiState !is TrekUiState.Loading && filteredTreks.isEmpty()) {
-                item(key = "empty_state") {
-                    TrekEmptyState(
-                        isSearching = searchQuery.isNotBlank(),
-                        onClear     = { searchQuery = ""; selectedFilter = "All" }
-                    )
+                // ── Empty state ────────────────────────────────────────────
+                if (uiState !is TrekUiState.Loading && filteredTreks.isEmpty()) {
+                    item(key = "empty_state") {
+                        TrekEmptyState(
+                            // FIX: previously only showed the reset button when
+                            // isSearching was true, so a user who only changed
+                            // the filter chip (no search text) got stuck with
+                            // no visible way to recover from the empty state.
+                            canReset = searchQuery.isNotBlank() || selectedFilter != "All",
+                            isSearching = searchQuery.isNotBlank(),
+                            onClear     = { searchQuery = ""; selectedFilter = "All" }
+                        )
+                    }
                 }
             }
         }
@@ -394,7 +431,6 @@ fun TrekListScreen(navController: NavController) {
 
 @Composable
 private fun FilterChipItem(label: String, selected: Boolean, onClick: () -> Unit) {
-    // Subtle scale pulse on selection
     val scale by animateFloatAsState(
         targetValue   = if (selected) 1.04f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
@@ -418,7 +454,7 @@ private fun FilterChipItem(label: String, selected: Boolean, onClick: () -> Unit
             .scale(scale)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication        = null,  // ripple would fight the scale anim
+                indication        = null,
                 onClick           = onClick
             )
     ) {
@@ -464,7 +500,6 @@ private fun TrekCardSkeleton(modifier: Modifier = Modifier) {
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column {
-            // FIX: hero shimmer shares the same card shape — no gap
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -535,7 +570,11 @@ private fun TrekCardSkeleton(modifier: Modifier = Modifier) {
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 @Composable
-private fun TrekEmptyState(isSearching: Boolean, onClear: () -> Unit) {
+private fun TrekEmptyState(
+    canReset: Boolean,
+    isSearching: Boolean,
+    onClear: () -> Unit
+) {
     Column(
         modifier            = Modifier
             .fillMaxWidth()
@@ -569,7 +608,7 @@ private fun TrekEmptyState(isSearching: Boolean, onClear: () -> Unit) {
             textAlign  = TextAlign.Center,
             lineHeight = 19.sp
         )
-        if (isSearching) {
+        if (canReset) {
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick        = onClear,
@@ -600,7 +639,6 @@ fun TrekCard(
     onClick:      () -> Unit,
     modifier:     Modifier = Modifier
 ) {
-    // Subtle press scale — gives tactile feedback without a competing ripple
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val cardScale by animateFloatAsState(
@@ -615,7 +653,7 @@ fun TrekCard(
             .scale(cardScale)
             .clickable(
                 interactionSource = interactionSource,
-                indication        = null,   // FIX: we handle feedback via scale; no double ripple
+                indication        = null,
                 onClick           = onClick
             ),
         shape     = RoundedCornerShape(16.dp),
@@ -625,15 +663,11 @@ fun TrekCard(
         Column {
 
             // ── Hero image ────────────────────────────────────────────────
-            // FIX: removed the explicit .clip() on the Box — the Card's own
-            // RoundedCornerShape(16dp) clips all children, so there is no
-            // white gap between the bottom of the image and the card edge.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(190.dp)
             ) {
-                // Gradient placeholder — always present, image layers on top
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -645,7 +679,6 @@ fun TrekCard(
                 )
 
                 if (!trek.thumbnailUrl.isNullOrBlank()) {
-                    // FIX: track painter state correctly; Loading ≠ Empty
                     var painterState by remember {
                         mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Loading(null))
                     }
@@ -659,8 +692,6 @@ fun TrekCard(
                         onState            = { painterState = it },
                         modifier           = Modifier.fillMaxSize()
                     )
-                    // Dim during load so the gradient placeholder shows smoothly,
-                    // NOT when the image has successfully loaded.
                     if (painterState is AsyncImagePainter.State.Loading) {
                         Box(
                             modifier = Modifier
@@ -670,7 +701,6 @@ fun TrekCard(
                     }
                 }
 
-                // Bottom scrim
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -800,8 +830,6 @@ fun TrekCard(
 
                     Spacer(Modifier.weight(1f))
 
-                    // FIX: no separate clickable here — card's clickable covers the full
-                    // surface, so this Surface is purely visual (no onClick registration).
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = ListPalette.TextPrimary
@@ -875,11 +903,12 @@ private fun TrekStat(icon: ImageVector, value: String, label: String) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// FIX: removed duplicate getDifficultyColor() — it was an exact copy of
+// difficultyColor() with a different name. Callers elsewhere in the app
+// using getDifficultyColor should switch to difficultyColor directly.
 fun difficultyColor(difficulty: String): Color = when (difficulty.lowercase()) {
     "easy"     -> ListPalette.DiffEasy
     "moderate" -> ListPalette.DiffModerate
     "hard"     -> ListPalette.DiffHard
     else       -> Color(0xFF888888)
 }
-
-fun getDifficultyColor(difficulty: String): Color = difficultyColor(difficulty)

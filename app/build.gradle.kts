@@ -2,6 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -62,7 +64,6 @@ dependencies {
 
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.compose.foundation)
-
     testImplementation(libs.junit)
 
     androidTestImplementation(libs.androidx.junit)
@@ -88,7 +89,7 @@ dependencies {
     )
 
     implementation(
-        "androidx.compose.material:material-icons-extended-android:1.7.8"
+        "androidx.compose.material:material-icons-extended-android"
     )
 
     implementation(
@@ -145,7 +146,7 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
-    implementation("androidx.compose.runtime:runtime-livedata:1.7.8")
+    implementation("androidx.compose.runtime:runtime-livedata")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
@@ -160,5 +161,11 @@ dependencies {
 
     // Splash screen API — for the auth-aware splash we'll wire in later
     implementation("androidx.core:core-splashscreen:1.0.1")
+
+    implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
+    implementation("com.google.firebase:firebase-analytics")
+
+
+    implementation("com.google.firebase:firebase-messaging")   // ← BOM-managed
 
 }

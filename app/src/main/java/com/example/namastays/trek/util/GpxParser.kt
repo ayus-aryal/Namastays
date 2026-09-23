@@ -28,10 +28,7 @@ data class RouteBounds(
     val maxLng: Double
 )
 
-/**
- * Single result returned by [GpxParser.parseFull].
- * Holds everything the ViewModel needs from one file read.
- */
+/** Single result returned by [GpxParser.parseFull] — everything derived from one file read. */
 data class GpxParseResult(
     val points: List<Point>,
     val elevationProfile: List<ElevationPoint>,
@@ -46,10 +43,8 @@ object GpxParser {
 
     /**
      * Parse the GPX file exactly ONCE and return all derived data.
-     *
-     * Previously the ViewModel called parseToGeoJson, parseElevationProfile,
-     * getBounds, and parseToPoints separately — four full file reads on startup.
-     * Call this instead and destructure the result.
+     * Call this instead of the legacy single-purpose wrappers below, each of
+     * which re-parses the whole file — parseFull() does one SAX pass total.
      */
     fun parseFull(context: Context, trekId: String): GpxParseResult {
         val gpxFile = File(context.filesDir, "$trekId.gpx")
@@ -59,9 +54,8 @@ object GpxParser {
         }
 
         return try {
-            // Collect both points and elevations in a single SAX pass.
             val rawPoints = mutableListOf<Point>()
-            val rawElevations = mutableListOf<Double?>()  // null = no <ele> for that trkpt
+            val rawElevations = mutableListOf<Double?>() // null = no <ele> for that trkpt; parallel to rawPoints
 
             val factory = SAXParserFactory.newInstance()
             val parser  = factory.newSAXParser()
@@ -74,7 +68,6 @@ object GpxParser {
 
             Log.d(TAG, "Parsed ${rawPoints.size} track points for trek '$trekId'")
 
-            // ── Bounds (derived from point list, no extra I/O) ──────────────
             val bounds = RouteBounds(
                 minLat = rawPoints.minOf { it.latitude() },
                 maxLat = rawPoints.maxOf { it.latitude() },
@@ -82,7 +75,6 @@ object GpxParser {
                 maxLng = rawPoints.maxOf { it.longitude() }
             )
 
-            // ── Elevation profile ───────────────────────────────────────────
             val elevationProfile = buildElevationProfile(rawPoints, rawElevations)
 
             GpxParseResult(
@@ -97,9 +89,8 @@ object GpxParser {
     }
 
     // ── Legacy single-purpose wrappers ─────────────────────────────────────────
-    // Kept for call-site compatibility. Each delegates to parseFull() — so
-    // calling all four still results in four file reads. Migrate call sites to
-    // parseFull() to get the single-read benefit.
+    // Kept for call-site compatibility; each delegates to parseFull(), so
+    // calling all four still re-reads the file four times. Prefer parseFull().
 
     fun parseToGeoJson(context: Context, trekId: String): FeatureCollection? {
         val points = parseFull(context, trekId).points
@@ -119,18 +110,38 @@ object GpxParser {
 
     // ── Elevation profile builder ───────────────────────────────────────────────
 
+    /**
+     * Builds a distance-vs-elevation profile from parallel points/elevations
+     * lists, then downsamples to at most [MAX_ELEVATION_POINTS] entries for
+     * cheap chart rendering.
+     *
+     * FIX 1 — starting elevation: previously used
+     * `elevations.firstOrNull { it != null }`, which picks the first
+     * NON-NULL elevation anywhere in the list — silently substituting a
+     * LATER point's elevation as "the start" if the very first <trkpt> (a
+     * common GPS-cold-start case) has no <ele>. Now explicitly reads
+     * `elevations[0]` and only falls back to the first available non-null
+     * value if that exact entry is missing, so the profile's starting value
+     * is accurate whenever the data actually supports it.
+     *
+     * FIX 2 — downsampling could silently drop the final point: taking every
+     * Nth element by `index % step == 0` has no guarantee the last index is
+     * a multiple of step (e.g. 250 points, step=2 keeps indices 0,2,4,...248
+     * and drops 249 — the trek's actual endpoint/summit elevation). The
+     * downsampled list now always force-includes the last point.
+     */
     private fun buildElevationProfile(
         points: List<Point>,
         elevations: List<Double?>
     ): List<ElevationPoint> {
-        // Need at least one point with a valid elevation to build a profile.
         if (points.isEmpty() || elevations.all { it == null }) return emptyList()
+
+        val fallbackFirstElevation = elevations.firstOrNull { it != null } ?: 0.0
+        val startElevation = elevations.getOrNull(0) ?: fallbackFirstElevation
 
         var totalDistance = 0f
         val result = mutableListOf<ElevationPoint>()
-
-        // Use the first available elevation as the starting point.
-        result.add(ElevationPoint(0f, elevations.firstOrNull { it != null } ?: 0.0))
+        result.add(ElevationPoint(0f, startElevation))
 
         for (i in 1 until points.size) {
             val prev = points[i - 1]
@@ -139,19 +150,23 @@ object GpxParser {
                 prev.latitude(), prev.longitude(),
                 curr.latitude(), curr.longitude()
             )
+            // Missing elevation for this point: carry forward the last known
+            // value rather than leaving a gap in the profile.
             val ele = elevations.getOrNull(i) ?: result.last().elevationM
             result.add(ElevationPoint(totalDistance / 1000f, ele))
         }
 
-        // ── Downsample to MAX_ELEVATION_POINTS ─────────────────────────────
-        // FIX: was using integer division result.size / 200, which meant
-        // 201-399 points got step=1 (no reduction at all). Now uses ceiling
-        // division so any size > 200 actually reduces.
-        return if (result.size > MAX_ELEVATION_POINTS) {
-            val step = (result.size + MAX_ELEVATION_POINTS - 1) / MAX_ELEVATION_POINTS
-            result.filterIndexed { index, _ -> index % step == 0 }
+        if (result.size <= MAX_ELEVATION_POINTS) return result
+
+        val step = (result.size + MAX_ELEVATION_POINTS - 1) / MAX_ELEVATION_POINTS
+        val downsampled = result.filterIndexed { index, _ -> index % step == 0 }
+
+        // Force-include the true last point if the stride skipped past it —
+        // guarantees the profile always ends at the trek's actual endpoint.
+        return if (downsampled.last() !== result.last()) {
+            downsampled + result.last()
         } else {
-            result
+            downsampled
         }
     }
 }
@@ -159,9 +174,9 @@ object GpxParser {
 // ─── SAX handlers ──────────────────────────────────────────────────────────────
 
 /**
- * Single-pass handler that collects both track points and their elevations.
- * Elevation list is parallel to points list — index N in elevations corresponds
- * to index N in points. Null means the <trkpt> had no <ele> child.
+ * Single-pass handler collecting both track points and their elevations.
+ * [elevations] is parallel to [points] — index N in one corresponds to
+ * index N in the other. Null means that <trkpt> had no <ele> child.
  */
 private class FullGpxHandler(
     private val points: MutableList<Point>,
@@ -198,15 +213,13 @@ private class FullGpxHandler(
         when (qName) {
             "ele" -> {
                 inEle = false
-                // Store elevation against the pending point; will be committed in trkpt end.
-                // Note: <ele> appears as a child of <trkpt>, so we just capture it here
-                // and commit with the point when </trkpt> fires.
-                // (Some GPX files put </ele> before </trkpt>)
+                // Captured into eleBuffer; committed alongside the point when
+                // </trkpt> fires below (handles GPX files where </ele> closes
+                // before </trkpt>, which is the normal/only valid ordering).
             }
             "trkpt" -> {
                 val pt = pendingPoint ?: return
                 points.add(pt)
-                // Commit the elevation captured during this trkpt block (may be null).
                 val ele = if (eleBuffer.isNotEmpty())
                     eleBuffer.toString().trim().toDoubleOrNull()
                 else null
@@ -220,9 +233,8 @@ private class FullGpxHandler(
 }
 
 /**
- * Lightweight handler that only extracts track point coordinates.
- * Used by MapLayerManager.loadRoute (needs GeoJSON) and any path
- * that explicitly only needs points.
+ * Lightweight handler that only extracts track point coordinates. Used
+ * anywhere that only needs the point list, not elevation data.
  */
 class GpxSaxHandler(
     private val points: MutableList<Point>

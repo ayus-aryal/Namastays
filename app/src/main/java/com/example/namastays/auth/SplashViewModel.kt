@@ -14,12 +14,6 @@ sealed class SplashAuthState {
     object Unauthenticated : SplashAuthState()
 }
 
-/**
- * Drives the one decision splash exists to make: does this cold start
- * land on "home" or "login". Lives at MainActivity scope — created once,
- * not per-screen — since its job is finished the moment the decision
- * is made and never needed again for the rest of the app's lifetime.
- */
 class SplashViewModel(
     private val authRepository: AuthRepository
 ) : ViewModel() {
@@ -49,8 +43,30 @@ class SplashViewModel(
             // Have a refresh token, but access token is expired/missing —
             // attempt one silent refresh before giving up.
             when (authRepository.refresh()) {
-                is NetworkResult.Success -> _authState.value = SplashAuthState.Authenticated
-                else -> _authState.value = SplashAuthState.Unauthenticated
+                is NetworkResult.Success -> {
+                    _authState.value = SplashAuthState.Authenticated
+                }
+
+                NetworkResult.NoConnectivity, NetworkResult.Timeout -> {
+                    // Couldn't reach the backend to confirm — but nothing
+                    // here proved the session is invalid either. Trust the
+                    // cached refresh token; offline-capable screens (Trek
+                    // Mode, Safety/SOS) don't need a fresh access token,
+                    // and TokenAuthenticator will handle refresh-and-retry
+                    // once connectivity returns for any online-only call.
+                    _authState.value = SplashAuthState.Authenticated
+                }
+
+                is NetworkResult.ServerError -> {
+                    // AuthRepository.refresh() only clears tokenManager on
+                    // a genuine 401. Any other server error shouldn't force
+                    // a logout — check whether the session actually survived.
+                    _authState.value = if (authRepository.hasStoredSession()) {
+                        SplashAuthState.Authenticated
+                    } else {
+                        SplashAuthState.Unauthenticated
+                    }
+                }
             }
         }
     }

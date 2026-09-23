@@ -18,14 +18,12 @@ sealed class PlaceDetailUiState {
     object Idle    : PlaceDetailUiState()
     object Loading : PlaceDetailUiState()
     data class Success(val place: PlaceDetailResponse) : PlaceDetailUiState()
-    data class Error(val message: String) : PlaceDetailUiState()
+    // FIX #17 — typed AppError instead of String message
+    data class Error(val error: AppError) : PlaceDetailUiState()
 }
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-/**
- * FIX #15/#16/#22 — repository injected; NetworkResult handled explicitly.
- */
 class PlaceDetailViewModel(
     private val repository: PlaceRepository
 ) : ViewModel() {
@@ -40,10 +38,10 @@ class PlaceDetailViewModel(
         loadJob = viewModelScope.launch {
             _uiState.value = PlaceDetailUiState.Loading
             _uiState.value = when (val result = repository.getPlaceDetails(citySlug, placeSlug)) {
-                is NetworkResult.Success        -> PlaceDetailUiState.Success(result.data)
-                is NetworkResult.NoConnectivity -> PlaceDetailUiState.Error("No internet connection.")
-                is NetworkResult.Timeout        -> PlaceDetailUiState.Error("Request timed out.")
-                is NetworkResult.ServerError    -> PlaceDetailUiState.Error(result.message)
+                is NetworkResult.Success -> PlaceDetailUiState.Success(result.data)
+                else -> PlaceDetailUiState.Error(
+                    networkResultToAppErrorOrNull(result) ?: AppError.Server("Unknown error")
+                )
             }
         }
     }

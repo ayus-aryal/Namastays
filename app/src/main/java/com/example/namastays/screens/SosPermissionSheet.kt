@@ -28,7 +28,10 @@ import androidx.compose.ui.unit.sp
 import com.example.namastays.data.SosPermissionHelper
 import com.example.namastays.data.SosPermissionStatus
 import com.example.namastays.data.SosPermissionType
+import com.example.namastays.ui.theme.PlusJakartaSans
 
+// ─── Palette ──────────────────────────────────────────────────────────────────
+// Private to this file — colours are specific to the permission sheet UI.
 private val SheetRed     = Color(0xFFDC2626)
 private val SheetRedBg   = Color(0xFFFEE2E2)
 private val SheetGreen   = Color(0xFF16A34A)
@@ -41,6 +44,36 @@ private val SheetText    = Color(0xFF111827)
 private val SheetHint    = Color(0xFF9CA3AF)
 private val SheetBorder  = Color(0xFFE5E7EB)
 
+/**
+ * Bottom sheet that walks the user through granting every permission and
+ * enabling every service required by the SOS feature.
+ *
+ * The flow has two distinct phases:
+ *
+ * **Phase 1 — Permissions:** Shown until all four runtime permissions
+ * (SMS, Location, Bluetooth, Nearby Devices) are granted. If the user
+ * denies after a first attempt, the sheet switches to a "settings path"
+ * that deep-links to the app's system settings page.
+ *
+ * **Phase 2 — Services:** Shown once permissions are granted. Prompts the
+ * user to enable Location and Bluetooth if either is currently off, and
+ * optionally prompts for Do Not Disturb bypass access (CHANGE: new, not
+ * required for navigation — see [SosPermissionStatus.allGranted]).
+ *
+ * Navigation to [SOSScreen] happens automatically via [onAllGranted] once
+ * [SosPermissionStatus.allGranted] becomes true AND the user has taken at
+ * least one action (the `userAttemptedGrant` guard prevents auto-navigation
+ * on initial composition if permissions happen to already be granted — that
+ * case is handled upstream in [SafetyHomeScreen] and never shows this sheet).
+ *
+ * @param permissionStatus current snapshot of permission + service state,
+ *   updated by calling [onRefresh].
+ * @param onAllGranted called when all permissions and services are confirmed
+ *   ready; the caller should navigate to [SOSScreen].
+ * @param onDismiss called when the user taps Cancel or dismisses the sheet.
+ * @param onRefresh called to re-read current permission state from the system;
+ *   typically delegates to [SafetyViewModel.refreshPermissions].
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SosPermissionSheet(
@@ -51,11 +84,16 @@ fun SosPermissionSheet(
 ) {
     val context = LocalContext.current
 
+    // Tracks whether the user has taken any action this sheet session.
+    // Prevents auto-navigation to SOS on first composition if permissions
+    // were somehow already granted before the sheet opened.
     var userAttemptedGrant  by remember { mutableStateOf(false) }
+    // True if at least one permission was denied after a launch attempt.
     var anyDeniedAfterGrant by remember { mutableStateOf(false) }
+    // Switches to the Settings deep-link path after a denial.
     var showSettingsPath    by remember { mutableStateOf(false) }
 
-    // Launcher for requesting permissions
+    // Standard runtime permission launcher.
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
@@ -65,22 +103,33 @@ fun SosPermissionSheet(
         onRefresh()
     }
 
-    // Launcher for enabling Bluetooth (shows system BT enable dialog)
+    // System BT enable dialog launcher (ACTION_REQUEST_ENABLE).
     val enableBtLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        // After user dismisses BT enable dialog, re-check everything
+        // Re-check after user dismisses the BT dialog — they may have
+        // enabled it, or they may have dismissed without enabling.
         onRefresh()
     }
 
-    // Only auto-navigate after user acted AND everything is truly ready
+    // CHANGE: launcher for the DND (Do Not Disturb) policy access settings
+    // screen. There's no result code returned by the system for this intent,
+    // so we simply re-check permission state via onRefresh() on return.
+    val dndSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        onRefresh()
+    }
+
+    // Auto-navigate once everything is ready, but only after the user has
+    // taken an action — avoids racing with the initial permission refresh.
     LaunchedEffect(permissionStatus, userAttemptedGrant) {
         if (userAttemptedGrant && permissionStatus.allGranted) {
             onAllGranted()
         }
     }
 
-    // Derive what phase we're in
+    // Derived booleans for cleaner branch logic below.
     val allPermissionsGranted = permissionStatus.allPermissionsGranted
     val locationOff           = allPermissionsGranted && !permissionStatus.isLocationEnabled
     val bluetoothOff          = allPermissionsGranted && !permissionStatus.isBluetoothEnabled
@@ -99,7 +148,7 @@ fun SosPermissionSheet(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
 
-            // ── Title ─────────────────────────────────────────────────────────
+            // ── Title row ──────────────────────────────────────────────────────
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment     = Alignment.CenterVertically,
@@ -132,7 +181,8 @@ fun SosPermissionSheet(
                 }
             }
 
-            // ── Phase 1: Permission rows (shown until all permissions granted) ─
+            // ── Phase 1: Permission rows ───────────────────────────────────────
+            // Shown until all runtime permissions are granted.
             if (!allPermissionsGranted) {
                 Column(
                     modifier = Modifier
@@ -166,7 +216,9 @@ fun SosPermissionSheet(
                 }
             }
 
-            // ── Phase 2: Service state rows (shown once permissions are granted) ─
+            // ── Phase 2: Service state rows ────────────────────────────────────
+            // Shown once all permissions are granted — checks Location + BT on/off,
+            // plus (CHANGE) optional DND bypass access.
             if (allPermissionsGranted) {
                 Column(
                     modifier = Modifier
@@ -187,26 +239,33 @@ fun SosPermissionSheet(
                         icon    = Icons.Outlined.Bluetooth,
                         enabled = permissionStatus.isBluetoothEnabled,
                     )
+                    // CHANGE: optional DND-bypass status row. Purely
+                    // informational here — the CTA to grant it lives further
+                    // down in the action buttons section. Not required for
+                    // allGranted, so the sheet never blocks on this row.
+                    HorizontalDivider(color = SheetBorder, thickness = 0.5.dp)
+                    ServiceRow(
+                        label   = "Bypass Do Not Disturb",
+                        detail  = "Optional — lets SOS alerts vibrate even in DND",
+                        icon    = Icons.Outlined.NotificationsActive,
+                        enabled = permissionStatus.hasNotificationPolicyAccess,
+                    )
                 }
             }
 
-            // ── Denied after grant warning ────────────────────────────────────
+            // ── Contextual warning rows ────────────────────────────────────────
             if (userAttemptedGrant && anyDeniedAfterGrant) {
                 ServiceWarningRow(
                     icon = Icons.Outlined.Info,
                     text = "Some permissions were denied. You may need to open Settings and grant them manually.",
                 )
             }
-
-            // ── Location off warning + shortcut ───────────────────────────────
             if (locationOff) {
                 ServiceWarningRow(
                     icon = Icons.Outlined.LocationOff,
                     text = "Location is turned off. Open Settings → Location and enable it.",
                 )
             }
-
-            // ── Bluetooth off warning + enable prompt ─────────────────────────
             if (bluetoothOff) {
                 ServiceWarningRow(
                     icon = Icons.Outlined.BluetoothDisabled,
@@ -217,10 +276,10 @@ fun SosPermissionSheet(
             // ── Action buttons ────────────────────────────────────────────────
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
-                // ── Case A: Permissions not yet granted ───────────────────────
+                // Case A: permissions not yet granted
                 if (!allPermissionsGranted) {
                     if (showSettingsPath) {
-                        // Permanently denied — send to app settings
+                        // After a denial — deep-link to system app settings.
                         ActionButton(
                             label  = "Open App Settings",
                             icon   = Icons.Outlined.OpenInNew,
@@ -242,7 +301,6 @@ fun SosPermissionSheet(
                             if (toRequest.isNotEmpty()) permissionLauncher.launch(toRequest)
                         }
                     } else {
-                        // Normal grant flow
                         ActionButton(
                             label  = "Grant Permissions",
                             icon   = Icons.Outlined.Shield,
@@ -260,8 +318,9 @@ fun SosPermissionSheet(
                     }
                 }
 
-                // ── Case B: Permissions granted, but services off ─────────────
-                if (allPermissionsGranted && (!permissionStatus.isLocationEnabled || !permissionStatus.isBluetoothEnabled)) {
+                // Case B: permissions granted but a service is off
+                if (allPermissionsGranted &&
+                    (!permissionStatus.isLocationEnabled || !permissionStatus.isBluetoothEnabled)) {
 
                     if (bluetoothOff) {
                         ActionButton(
@@ -281,6 +340,8 @@ fun SosPermissionSheet(
                         ActionButton(
                             label  = "Open Location Settings",
                             icon   = Icons.Outlined.LocationOn,
+                            // Use grey when Bluetooth is also off so the
+                            // primary red CTA always targets Bluetooth first.
                             color  = if (bluetoothOff) SheetGray else SheetRed,
                             onClick = {
                                 userAttemptedGrant = true
@@ -293,14 +354,27 @@ fun SosPermissionSheet(
                         )
                     }
 
-                    // Re-check button after user manually enables services
                     SecondaryButton(label = "I've enabled them — check again") {
                         userAttemptedGrant = true
                         onRefresh()
                     }
                 }
 
-                // Dismiss
+                // CHANGE: optional DND-access CTA. Deliberately its own `if`
+                // block (independent of Case B) since DND bypass is not part
+                // of Location/Bluetooth service state and not required for
+                // allGranted — shown whenever permissions are granted but
+                // DND access hasn't been given yet.
+                if (allPermissionsGranted && !permissionStatus.hasNotificationPolicyAccess) {
+                    SecondaryButton(label = "Allow SOS to bypass Do Not Disturb") {
+                        userAttemptedGrant = true
+                        dndSettingsLauncher.launch(
+                            Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                        )
+                    }
+                }
+
+                // Dismiss / cancel
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -309,14 +383,24 @@ fun SosPermissionSheet(
                         .padding(vertical = 10.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("Cancel", fontFamily = PlusJakartaSans, fontSize = 13.sp, color = SheetHint)
+                    Text(
+                        "Cancel",
+                        fontFamily = PlusJakartaSans,
+                        fontSize   = 13.sp,
+                        color      = SheetHint
+                    )
                 }
             }
         }
     }
 }
 
-// ─── Permission row ───────────────────────────────────────────────────────────
+// ─── Permission Row ───────────────────────────────────────────────────────────
+
+/**
+ * A single row in the permission checklist (Phase 1).
+ * Shows granted/not-granted state visually via icon and tick/circle.
+ */
 @Composable
 private fun PermissionRow(
     type   : SosPermissionType,
@@ -337,14 +421,31 @@ private fun PermissionRow(
                 .background(if (granted) SheetGreenBg else SheetGrayBg),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, null, tint = if (granted) SheetGreen else SheetGray, modifier = Modifier.size(18.dp))
+            Icon(
+                icon, null,
+                tint     = if (granted) SheetGreen else SheetGray,
+                modifier = Modifier.size(18.dp)
+            )
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(type.label, fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = SheetText)
-            Text(type.rationale, fontFamily = PlusJakartaSans, fontSize = 11.sp, color = SheetHint, lineHeight = 15.sp)
+            Text(
+                type.label,
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize   = 14.sp,
+                color      = SheetText
+            )
+            Text(
+                type.rationale,
+                fontFamily = PlusJakartaSans,
+                fontSize   = 11.sp,
+                color      = SheetHint,
+                lineHeight = 15.sp
+            )
         }
         Icon(
-            imageVector        = if (granted) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+            imageVector        = if (granted) Icons.Outlined.CheckCircle
+            else Icons.Outlined.RadioButtonUnchecked,
             contentDescription = null,
             tint               = if (granted) SheetGreen else SheetHint,
             modifier           = Modifier.size(20.dp),
@@ -352,7 +453,12 @@ private fun PermissionRow(
     }
 }
 
-// ─── Service state row ────────────────────────────────────────────────────────
+// ─── Service State Row ────────────────────────────────────────────────────────
+
+/**
+ * A single row in the service state checklist (Phase 2).
+ * Shows whether Location, Bluetooth, or DND access is currently on/off.
+ */
 @Composable
 private fun ServiceRow(
     label  : String,
@@ -374,10 +480,20 @@ private fun ServiceRow(
                 .background(if (enabled) SheetGreenBg else SheetAmberBg),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, null, tint = if (enabled) SheetGreen else SheetAmber, modifier = Modifier.size(18.dp))
+            Icon(
+                icon, null,
+                tint     = if (enabled) SheetGreen else SheetAmber,
+                modifier = Modifier.size(18.dp)
+            )
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = SheetText)
+            Text(
+                label,
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize   = 14.sp,
+                color      = SheetText
+            )
             Text(
                 text       = if (enabled) "On" else detail,
                 fontFamily = PlusJakartaSans,
@@ -387,7 +503,8 @@ private fun ServiceRow(
             )
         }
         Icon(
-            imageVector        = if (enabled) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
+            imageVector        = if (enabled) Icons.Outlined.CheckCircle
+            else Icons.Outlined.ErrorOutline,
             contentDescription = null,
             tint               = if (enabled) SheetGreen else SheetAmber,
             modifier           = Modifier.size(20.dp),
@@ -395,7 +512,9 @@ private fun ServiceRow(
     }
 }
 
-// ─── Warning row ─────────────────────────────────────────────────────────────
+// ─── Warning Row ─────────────────────────────────────────────────────────────
+
+/** An amber inline warning strip shown for contextual issues (denied, service off). */
 @Composable
 private fun ServiceWarningRow(icon: ImageVector, text: String) {
     Row(
@@ -409,11 +528,19 @@ private fun ServiceWarningRow(icon: ImageVector, text: String) {
         verticalAlignment     = Alignment.Top,
     ) {
         Icon(icon, null, tint = SheetAmber, modifier = Modifier.size(16.dp))
-        Text(text, fontFamily = PlusJakartaSans, fontSize = 12.sp, color = Color(0xFF92400E), lineHeight = 17.sp)
+        Text(
+            text,
+            fontFamily = PlusJakartaSans,
+            fontSize   = 12.sp,
+            color      = Color(0xFF92400E),
+            lineHeight = 17.sp
+        )
     }
 }
 
-// ─── Primary action button ────────────────────────────────────────────────────
+// ─── Primary Action Button ────────────────────────────────────────────────────
+
+/** A full-width solid primary CTA button. */
 @Composable
 private fun ActionButton(
     label  : String,
@@ -435,12 +562,20 @@ private fun ActionButton(
             verticalAlignment     = Alignment.CenterVertically,
         ) {
             Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp))
-            Text(label, fontFamily = PlusJakartaSans, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color.White)
+            Text(
+                label,
+                fontFamily = PlusJakartaSans,
+                fontWeight = FontWeight.Bold,
+                fontSize   = 15.sp,
+                color      = Color.White
+            )
         }
     }
 }
 
-// ─── Secondary action button ──────────────────────────────────────────────────
+// ─── Secondary Action Button ──────────────────────────────────────────────────
+
+/** A full-width outlined secondary button (grey fill, no colour emphasis). */
 @Composable
 private fun SecondaryButton(label: String, onClick: () -> Unit) {
     Box(
@@ -453,6 +588,12 @@ private fun SecondaryButton(label: String, onClick: () -> Unit) {
             .padding(vertical = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, fontFamily = PlusJakartaSans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = SheetText)
+        Text(
+            label,
+            fontFamily = PlusJakartaSans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize   = 14.sp,
+            color      = SheetText
+        )
     }
 }
